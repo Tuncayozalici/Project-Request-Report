@@ -1,0 +1,628 @@
+﻿using SAPbouiCOM.Framework;
+using SAPbouiCOM;
+using System;
+using System.Collections.Generic;
+using System.Xml;
+using SAPbobsCOM;
+using System.Globalization;
+using System.Diagnostics;
+
+namespace ProjeTablosu
+{
+    /// <summary>
+    /// Project Management Form for SAP Business One
+    /// Handles project creation and management with a user-friendly interface
+    /// </summary>
+    [FormAttribute("ProjeTablosu.Form1", "Form1.b1f")]
+    public class Form1 : UserFormBase
+    {
+        #region Form Controls
+        private SAPbouiCOM.EditText txtProjectName;
+        private SAPbouiCOM.EditText txtUser;
+        private SAPbouiCOM.ComboBox cmbBranch;
+        private SAPbouiCOM.ComboBox cmbDepartment;
+        private SAPbouiCOM.EditText txtDeliveryDate;
+        private SAPbouiCOM.EditText txtRegistrationDate;
+        private SAPbouiCOM.CheckBox chkProject;
+        private SAPbouiCOM.Matrix matrixItems;
+        private Button btnOk;
+        private Button btnCancel;
+        private Button btnAddRow;
+        #endregion
+
+        #region Constants
+        private const string MATRIX_COLUMN_ITEMCODE = "KalemKodu";
+        private const string MATRIX_COLUMN_ITEMNAME = "Kalem_Tan";
+        private const string DATE_FORMAT = "yyyyMMdd";
+        private const string UDO_PROJECT_TABLE = "@PROJECT";
+        private const string UDO_PROJECT_ROWS_TABLE = "@PROJECTROW";
+        #endregion
+
+        /// <summary>
+        /// Default constructor
+        /// </summary>
+        public Form1()
+        {
+            // Constructor intentionally left empty
+        }
+
+        /// <summary>
+        /// Initialize components. Called by framework after form created.
+        /// </summary>
+        public override void OnInitializeComponent()
+        {
+            try
+            {
+                // Initialize form controls
+                this.txtProjectName = ((SAPbouiCOM.EditText)(this.GetItem("txt_probas").Specific));
+                this.txtUser = ((SAPbouiCOM.EditText)(this.GetItem("txt_kul").Specific));
+                this.txtUser.ChooseFromListAfter += new SAPbouiCOM._IEditTextEvents_ChooseFromListAfterEventHandler(this.OnUserChooseFromListAfter);
+                this.cmbBranch = ((SAPbouiCOM.ComboBox)(this.GetItem("cmb_sube").Specific));
+                this.cmbDepartment = ((SAPbouiCOM.ComboBox)(this.GetItem("cmb_dep").Specific));
+                this.txtDeliveryDate = ((SAPbouiCOM.EditText)(this.GetItem("txt_teslim").Specific));
+                this.txtRegistrationDate = ((SAPbouiCOM.EditText)(this.GetItem("txt_kayıt").Specific));
+                this.chkProject = ((SAPbouiCOM.CheckBox)(this.GetItem("cb_proje").Specific));
+                this.matrixItems = ((SAPbouiCOM.Matrix)(this.GetItem("mtx").Specific));
+                this.matrixItems.ChooseFromListAfter += new SAPbouiCOM._IMatrixEvents_ChooseFromListAfterEventHandler(this.OnMatrixChooseFromListAfter);
+                this.btnOk = ((SAPbouiCOM.Button)(this.GetItem("1").Specific));
+                this.btnOk.PressedBefore += new SAPbouiCOM._IButtonEvents_PressedBeforeEventHandler(this.OnOkButtonPressedBefore);
+                this.btnCancel = ((SAPbouiCOM.Button)(this.GetItem("2").Specific));
+                this.btnAddRow = ((SAPbouiCOM.Button)(this.GetItem("btn_newrow").Specific));
+                this.btnAddRow.PressedAfter += new SAPbouiCOM._IButtonEvents_PressedAfterEventHandler(this.OnAddRowButtonPressedAfter);
+                this.btnOk.PressedAfter += new SAPbouiCOM._IButtonEvents_PressedAfterEventHandler(this.OnOkButtonPressedAfter);
+
+            }
+            catch (Exception ex)
+            {
+                LogError("Error initializing components", ex);
+            }
+
+            this.OnCustomInitialize();
+        }
+        private void SBO_Application_ItemEvent(string FormUID, ref SAPbouiCOM.ItemEvent pVal, out bool BubbleEvent)
+        {
+            BubbleEvent = true;
+            try
+            {
+
+
+
+            }
+            catch (Exception ex)
+            {
+                LogError("Hata oluştu (ItemEvent)", ex);
+            }
+        }
+
+
+        /// <summary>
+        /// Initialize form event. Called by framework before form creation.
+        /// </summary>
+        public override void OnInitializeFormEvents()
+        {
+            SAPbouiCOM.Framework.Application.SBO_Application.ItemEvent += new SAPbouiCOM._IApplicationEvents_ItemEventEventHandler(SBO_Application_ItemEvent);
+            SAPbouiCOM.Framework.Application.SBO_Application.MenuEvent += SBO_Application_MenuEvent;
+        }
+
+        private void SBO_Application_MenuEvent(ref MenuEvent pVal, out bool BubbleEvent)
+        {
+            BubbleEvent = true;
+           // Program.SBO_Application.SetStatusBarMessage($"{pVal.MenuUID}", BoMessageTime.bmt_Long, false);
+            if (pVal.MenuUID == "1282" && pVal.BeforeAction == false)
+            {
+                SAPbouiCOM.Form form = SAPbouiCOM.Framework.Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
+                var Usern = (SAPbouiCOM.EditText)form.Items.Item("txt_kul").Specific;
+                if (Usern.Value == "")
+                {
+                    Usern.Value = Program.oCompany.UserName;
+                }
+
+            }
+        }
+
+        /// <summary>
+        /// Custom initialization logic for the form
+        /// </summary>
+        private void OnCustomInitialize()
+        {
+            try
+            {
+                // Initialize combo boxes with data
+                InitializeBranchComboBox();
+                InitializeDepartmentComboBox();
+                SAPbobsCOM.Company company = GetCompany();
+
+                // Set current user to user field
+                txtUser.Value = company.UserName;
+
+                // Set today's date in the registration date field
+                txtRegistrationDate.Value = DateTime.Today.ToString(DATE_FORMAT);
+                // Check user's department and set permissions
+                CheckUserDepartmentPermissions();
+            }
+            catch (Exception ex)
+            {
+                LogError("Error during custom initialization", ex);
+            }
+        }
+
+        #region Permission Management
+
+        /// <summary>
+        /// Checks the current user's department and sets appropriate permissions
+        /// </summary>
+        private void CheckUserDepartmentPermissions()
+        {
+            try
+            {
+                SAPbobsCOM.Company company = GetCompany();
+                SAPbobsCOM.Recordset recordset = null;
+
+                try
+                {
+                    recordset = (SAPbobsCOM.Recordset)company.GetBusinessObject(SAPbobsCOM.BoObjectTypes.BoRecordset);
+                    string currentUser = SAPbouiCOM.Framework.Application.SBO_Application.Company.UserName;
+
+                    // Query to get the user's department
+                    string query = $"SELECT Department FROM OUSR WHERE USER_CODE = '{currentUser}'";
+                    recordset.DoQuery(query);
+
+                    if (recordset.RecordCount > 0)
+                    {
+                        int userDeptCode = Convert.ToInt32(recordset.Fields.Item("Department").Value);
+
+                        // Disable project button if user is not in department 3
+                        if (userDeptCode != 3)
+                        {
+                            DisableProjectButton();
+                        }
+                    }
+                    else
+                    {
+                        // If user record not found, disable project button as a precaution
+                        DisableProjectButton();
+                    }
+                }
+                finally
+                {
+                    // Properly release the recordset
+                    if (recordset != null)
+                    {
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(recordset);
+                        recordset = null;
+                        GC.Collect();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError("Error checking user department", ex);
+            }
+        }
+
+        /// <summary>
+        /// Disables the project button on the form
+        /// </summary>
+        private void DisableProjectButton()
+        {
+            try
+            {
+                SAPbouiCOM.Form form = SAPbouiCOM.Framework.Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
+                SAPbouiCOM.Item btnPrjItem = form.Items.Item("btn_prj");
+                btnPrjItem.Enabled = false;
+            }
+            catch (Exception ex)
+            {
+                LogError("Error disabling project button", ex);
+            }
+        }
+        #endregion
+
+        #region ComboBox Initialization
+
+        /// <summary>
+        /// Initializes the branch combo box with data from OUBR table
+        /// </summary>
+        private void InitializeBranchComboBox()
+        {
+            SAPbobsCOM.Company company = GetCompany();
+            SAPbobsCOM.Recordset recordset = null;
+
+            try
+            {
+                recordset = (SAPbobsCOM.Recordset)company.GetBusinessObject(SAPbobsCOM.BoObjectTypes.BoRecordset);
+                string query = "SELECT DISTINCT Name FROM OUBR";
+                recordset.DoQuery(query);
+
+                // Clear existing values in the combo box
+                ClearComboBoxValues(cmbBranch);
+
+                // Add items to the combo box
+                if (recordset.RecordCount > 0)
+                {
+                    while (!recordset.EoF)
+                    {
+                        string branchName = recordset.Fields.Item("Name").Value.ToString();
+                        cmbBranch.ValidValues.Add(branchName, branchName);
+                        recordset.MoveNext();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError("Error initializing branch combo box", ex);
+            }
+            finally
+            {
+                // Properly release the recordset
+                if (recordset != null)
+                {
+                    System.Runtime.InteropServices.Marshal.ReleaseComObject(recordset);
+                    recordset = null;
+                    GC.Collect();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Initializes the department combo box with data from OUDP table
+        /// </summary>
+        private void InitializeDepartmentComboBox()
+        {
+            SAPbobsCOM.Company company = GetCompany();
+            SAPbobsCOM.Recordset recordset = null;
+
+            try
+            {
+                recordset = (SAPbobsCOM.Recordset)company.GetBusinessObject(SAPbobsCOM.BoObjectTypes.BoRecordset);
+                string query = "SELECT DISTINCT Name FROM OUDP";
+                recordset.DoQuery(query);
+
+                // Clear existing values in the combo box
+                ClearComboBoxValues(cmbDepartment);
+
+                // Add items to the combo box
+                if (recordset.RecordCount > 0)
+                {
+                    while (!recordset.EoF)
+                    {
+                        string departmentName = recordset.Fields.Item("Name").Value.ToString();
+                        cmbDepartment.ValidValues.Add(departmentName, departmentName);
+                        recordset.MoveNext();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError("Error initializing department combo box", ex);
+            }
+            finally
+            {
+                // Properly release the recordset
+                if (recordset != null)
+                {
+                    System.Runtime.InteropServices.Marshal.ReleaseComObject(recordset);
+                    recordset = null;
+                    GC.Collect();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Clears all values from a combo box
+        /// </summary>
+        /// <param name="comboBox">The combo box to clear</param>
+        private void ClearComboBoxValues(SAPbouiCOM.ComboBox comboBox)
+        {
+            if (comboBox.ValidValues.Count > 0)
+            {
+                for (int i = comboBox.ValidValues.Count - 1; i >= 0; i--)
+                {
+                    comboBox.ValidValues.Remove(i, SAPbouiCOM.BoSearchKey.psk_Index);
+                }
+            }
+        }
+        #endregion
+
+        #region Choose From List Event Handlers
+
+        /// <summary>
+        /// Handles the ChooseFromListAfter event for standard fields
+        /// </summary>
+        /// <param name="getValue">The field to get the value from</param>
+        /// <param name="setValue">The field to set the value to</param>
+        /// <param name="tableName">The table name</param>
+        /// <param name="pVal">The event arguments</param>
+        private void HandleChooseFromListAfter(string getValue, string setValue, string tableName, SBOItemEventArg pVal)
+        {
+            try
+            {
+                SBOChooseFromListEventArg cfl = ((SBOChooseFromListEventArg)(pVal));
+                if (cfl.SelectedObjects == null)
+                {
+                    return;
+                }
+
+                string value = cfl.SelectedObjects.GetValue(getValue, 0).ToString();
+                UIAPIRawForm.DataSources.DBDataSources.Item(tableName).SetValue(setValue, 0, value);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in HandleChooseFromListAfter", ex);
+            }
+        }
+
+        /// <summary>
+        /// Handles the ChooseFromListAfter event for matrix items
+        /// </summary>
+        /// <param name="getValue">The field to get the value from</param>
+        /// <param name="setValue">The field to set the value to</param>
+        /// <param name="tableName">The table name</param>
+        /// <param name="pVal">The event arguments</param>
+        private void HandleChooseFromListAfterMatrixItems(string getValue, string setValue, string tableName, SBOItemEventArg pVal)
+        {
+            try
+            {
+                SBOChooseFromListEventArg cfl = ((SBOChooseFromListEventArg)(pVal));
+                if (cfl.SelectedObjects == null)
+                {
+                    return;
+                }
+
+                string value = cfl.SelectedObjects.GetValue(getValue, 0).ToString();
+                var dataSource = UIAPIRawForm.DataSources.DBDataSources.Item(tableName);
+                dataSource.SetValue(setValue, pVal.Row - 1, value);
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in HandleChooseFromListAfterMatrixItems", ex);
+            }
+        }
+
+        /// <summary>
+        /// Event handler for the user field ChooseFromListAfter event
+        /// </summary>
+        private void OnUserChooseFromListAfter(object sboObject, SBOItemEventArg pVal)
+        {
+            HandleChooseFromListAfter("U_NAME", "U_NAME", UDO_PROJECT_TABLE, pVal);
+        }
+
+        /// <summary>
+        /// Event handler for the matrix ChooseFromListAfter event
+        /// </summary>
+        private void OnMatrixChooseFromListAfter(object sboObject, SBOItemEventArg pVal)
+        {
+            try
+            {
+                if (pVal.ColUID == MATRIX_COLUMN_ITEMCODE || pVal.ColUID == MATRIX_COLUMN_ITEMNAME)
+                {
+                    HandleChooseFromListAfterMatrixItems("ItemCode", "U_ItemCode", UDO_PROJECT_ROWS_TABLE, pVal);
+                    HandleChooseFromListAfterMatrixItems("ItemName", "U_ItemName", UDO_PROJECT_ROWS_TABLE, pVal);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in OnMatrixChooseFromListAfter", ex);
+            }
+        }
+        #endregion
+
+        #region Button Event Handlers
+
+        /// <summary>
+        /// Event handler for the OK button PressedBefore event
+        /// </summary>
+        private void OnOkButtonPressedBefore(object sboObject, SBOItemEventArg pVal, out bool BubbleEvent)
+        {
+            BubbleEvent = true;
+
+            try
+            {
+                // Validate required fields
+                if (!ValidateRequiredFields())
+                {
+                    BubbleEvent = false;
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError("Error in OnOkButtonPressedBefore", ex);
+                BubbleEvent = false;
+            }
+        }
+        private void OnOkButtonPressedAfter(object sboObject, SBOItemEventArg pVal)
+        {
+            if (pVal.ActionSuccess)
+            {
+                ShowMessage("Proje başarıyla kaydedildi.");
+            }
+        }
+
+        /// <summary>
+        /// Event handler for the Add Row button PressedAfter event
+        /// </summary>
+        private void OnAddRowButtonPressedAfter(object sboObject, SBOItemEventArg pVal)
+        {
+            // Check if action was successful
+            if (pVal.ActionSuccess)
+            {
+                try
+                {
+                    AddNewMatrixRow();
+                }
+                catch (Exception ex)
+                {
+                    LogError("Error in OnAddRowButtonPressedAfter", ex);
+                }
+            }
+        }
+        #endregion
+
+        #region Matrix Operations
+
+        /// <summary>
+        /// Adds a new row to the matrix
+        /// </summary>
+        private void AddNewMatrixRow()
+        {
+            // Freeze the form for better performance
+            this.UIAPIRawForm.Freeze(true);
+
+            try
+            {
+                // Flush matrix data to data source
+                matrixItems.FlushToDataSource();
+
+                // Get the data source for matrix rows
+                SAPbouiCOM.DBDataSource dbDataSourceLines = UIAPIRawForm.DataSources.DBDataSources.Item(UDO_PROJECT_ROWS_TABLE);
+
+                // Check if there is only one empty record
+                if (dbDataSourceLines.Size == 1 && string.IsNullOrEmpty(dbDataSourceLines.GetValue("U_ItemName", 0).Trim()))
+                {
+                    dbDataSourceLines.RemoveRecord(0);
+                }
+
+                // Add new record
+                int rowIndex = dbDataSourceLines.Size;
+                dbDataSourceLines.InsertRecord(rowIndex);
+                dbDataSourceLines.Offset = rowIndex;
+
+                // Set default values
+                dbDataSourceLines.SetValue("U_ItemCode", rowIndex, "");
+                dbDataSourceLines.SetValue("U_ItemName", rowIndex, "");
+                dbDataSourceLines.SetValue("U_ReqDate", rowIndex, txtDeliveryDate.Value);
+
+                // Reload matrix from data source
+                matrixItems.LoadFromDataSource();
+
+                // Select the new row
+                matrixItems.SetLineData(matrixItems.RowCount);
+
+                // Update row numbers
+                UpdateMatrixRowNumbers();
+            }
+            catch (Exception ex)
+            {
+                LogError("Error adding new matrix row", ex);
+                ShowMessage("Error adding new row: " + ex.Message);
+            }
+            finally
+            {
+                // Unfreeze the form
+                this.UIAPIRawForm.Freeze(false);
+            }
+        }
+
+        /// <summary>
+        /// Updates row numbers in the matrix
+        /// </summary>
+        private void UpdateMatrixRowNumbers()
+        {
+            for (int i = 1; i <= matrixItems.RowCount; i++)
+            {
+                ((SAPbouiCOM.EditText)matrixItems.Columns.Item("#").Cells.Item(i).Specific).Value = i.ToString();
+            }
+        }
+        #endregion
+
+
+        #region Validation
+
+        /// <summary>
+        /// Validates required fields on the form
+        /// </summary>
+        /// <returns>True if all required fields are valid</returns>
+        private bool ValidateRequiredFields()
+        {
+            // Check text fields
+            if (string.IsNullOrEmpty(txtProjectName.Value.Trim()) ||
+                string.IsNullOrEmpty(txtUser.Value.Trim()) ||
+                string.IsNullOrEmpty(txtDeliveryDate.Value.Trim()) ||
+                string.IsNullOrEmpty(txtRegistrationDate.Value.Trim()))
+            {
+                ShowMessage("Please fill in all required text fields!");
+                return false;
+            }
+
+            // Check combo boxes
+            if (cmbBranch.Selected == null || string.IsNullOrEmpty(cmbBranch.Selected.Value) ||
+                cmbDepartment.Selected == null || string.IsNullOrEmpty(cmbDepartment.Selected.Value))
+            {
+                ShowMessage("Please select both branch and department!");
+                return false;
+            }
+
+            // Check matrix rows
+            SAPbouiCOM.Matrix matrix = (SAPbouiCOM.Matrix)this.GetItem("mtx").Specific;
+            int rowCount = matrix.RowCount;
+
+            if (rowCount > 0)
+            {
+                for (int i = 1; i <= rowCount; i++)
+                {
+                    string kalemTan = ((SAPbouiCOM.EditText)matrix.Columns.Item("Kalem_Tan").Cells.Item(i).Specific).Value.Trim();
+                    string tarih = ((SAPbouiCOM.EditText)matrix.Columns.Item("Tarih").Cells.Item(i).Specific).Value.Trim();
+
+                    if (string.IsNullOrEmpty(kalemTan) || string.IsNullOrEmpty(tarih))
+                    {
+                        ShowMessage($"Row {i}: Item definition and date fields cannot be empty!");
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+        #endregion
+
+        #region Utility Methods
+
+        /// <summary>
+        /// Gets the SAP B1 company object
+        /// </summary>
+        /// <returns>SAP B1 company object</returns>
+        private SAPbobsCOM.Company GetCompany()
+        {
+            return (SAPbobsCOM.Company)SAPbouiCOM.Framework.Application.SBO_Application.Company.GetDICompany();
+        }
+
+        /// <summary>
+        /// Shows a message box to the user
+        /// </summary>
+        /// <param name="message">The message to show</param>
+        private void ShowMessage(string message)
+        {
+            SAPbouiCOM.Framework.Application.SBO_Application.MessageBox(message);
+        }
+
+        /// <summary>
+        /// Shows a status bar message
+        /// </summary>
+        /// <param name="message">The message to show</param>
+        /// <param name="messageType">The type of message</param>
+        private void ShowStatusMessage(string message, BoStatusBarMessageType messageType)
+        {
+            SAPbouiCOM.Framework.Application.SBO_Application.StatusBar.SetText(
+                message,
+                SAPbouiCOM.BoMessageTime.bmt_Short,
+                messageType);
+        }
+
+        /// <summary>
+        /// Logs an error message
+        /// </summary>
+        /// <param name="message">The error message</param>
+        /// <param name="ex">The exception</param>
+        private void LogError(string message, Exception ex)
+        {
+            string errorMessage = $"{message}: {ex.Message}";
+            Trace.WriteLine(errorMessage);
+            Trace.WriteLine(ex.StackTrace);
+
+            // You can also implement more sophisticated logging here
+            // For example, writing to a log file or database
+        }
+        #endregion
+    }
+}
