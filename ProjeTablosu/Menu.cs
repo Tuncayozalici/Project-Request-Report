@@ -45,7 +45,7 @@ namespace ProjeTablosu
                 // Create s sub menu
                 oCreationPackage.Type = SAPbouiCOM.BoMenuType.mt_STRING;
                 oCreationPackage.UniqueID = "ProjeTablosu.Form1";
-                oCreationPackage.String = "Proje Talebi Raporu";
+                oCreationPackage.String = "Proje Talebi";
                 oMenus.AddEx(oCreationPackage);
             }
             catch (Exception er)
@@ -57,7 +57,7 @@ namespace ProjeTablosu
                 // Menü koleksiyonunda, form2 için ayrı bir menü öğesi ekleyin.
                 oCreationPackage.Type = SAPbouiCOM.BoMenuType.mt_STRING;
                 oCreationPackage.UniqueID = "ProjeTablosu.Form2";
-                oCreationPackage.String = "Proje Talebi Detay Raporu"; // Form2 için uygun bir etiket belirleyin.
+                oCreationPackage.String = "Proje Talebi Raporu"; // Form2 için uygun bir etiket belirleyin.
                 oMenus.AddEx(oCreationPackage);
             }
             catch (Exception er)
