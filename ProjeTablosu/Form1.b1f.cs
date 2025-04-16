@@ -6,6 +6,7 @@ using System.Xml;
 using SAPbobsCOM;
 using System.Globalization;
 using System.Diagnostics;
+using Application = SAPbouiCOM.Framework.Application;
 
 namespace ProjeTablosu
 {
@@ -18,6 +19,7 @@ namespace ProjeTablosu
     {
         #region Form Controls
         private SAPbouiCOM.EditText txtProjectName;
+        private SAPbouiCOM.EditText txt_DocNum;
         private SAPbouiCOM.EditText txtUser;
         private SAPbouiCOM.ComboBox cmbBranch;
         private SAPbouiCOM.ComboBox cmbDepartment;
@@ -38,6 +40,7 @@ namespace ProjeTablosu
         private const string UDO_PROJECT_ROWS_TABLE = "@PROJECTROW";
         #endregion
 
+
         /// <summary>
         /// Default constructor
         /// </summary>
@@ -57,6 +60,7 @@ namespace ProjeTablosu
                 this.txtProjectName = ((SAPbouiCOM.EditText)(this.GetItem("txt_probas").Specific));
                 this.txtUser = ((SAPbouiCOM.EditText)(this.GetItem("txt_kul").Specific));
                 this.txtUser.ChooseFromListAfter += new SAPbouiCOM._IEditTextEvents_ChooseFromListAfterEventHandler(this.OnUserChooseFromListAfter);
+                this.txt_DocNum = ((SAPbouiCOM.EditText)(this.GetItem("txt_DocNum").Specific));
                 this.cmbBranch = ((SAPbouiCOM.ComboBox)(this.GetItem("cmb_sube").Specific));
                 this.cmbDepartment = ((SAPbouiCOM.ComboBox)(this.GetItem("cmb_dep").Specific));
                 this.txtDeliveryDate = ((SAPbouiCOM.EditText)(this.GetItem("txt_teslim").Specific));
@@ -123,29 +127,201 @@ namespace ProjeTablosu
         /// <summary>
         /// Custom initialization logic for the form
         /// </summary>
-        private void OnCustomInitialize()
-        {
+         private void OnCustomInitialize()
+         {
             try
             {
-                // Initialize combo boxes with data
+                // ComboBox'ların ve diğer kontrollerin initialize edilmesi
                 InitializeBranchComboBox();
                 InitializeDepartmentComboBox();
                 SAPbobsCOM.Company company = GetCompany();
 
-                // Set current user to user field
+                // Kullanıcı adını ata
                 txtUser.Value = company.UserName;
 
-                // Set today's date in the registration date field
+                // Kayıt tarihini bugünün tarihi ile ayarla
                 txtRegistrationDate.Value = DateTime.Today.ToString(DATE_FORMAT);
-                // Check user's department and set permissions
+
+                // Kullanıcıya ait yetkilerin kontrolü
                 CheckUserDepartmentPermissions();
+
             }
             catch (Exception ex)
             {
                 LogError("Error during custom initialization", ex);
             }
+         }
+
+        #region Sayfa Açılımı
+        public void SetDocNum(string DocNum)
+        {
+            try
+            {
+               
+                LoadData(DocNum);
+
+            }
+            catch (Exception ex)
+            {
+                Application.SBO_Application.MessageBox("Form2 değer setlenirken hata: " + ex.Message);
+            }
+        }
+        private void LoadData(string docNumber)
+        {
+            try
+            {
+                // Doküman numarasına göre header bilgilerini çek
+                SAPbobsCOM.Company company = GetCompany();
+                SAPbobsCOM.Recordset recordset = null;
+
+                try
+                {
+                    recordset = (SAPbobsCOM.Recordset)company.GetBusinessObject(SAPbobsCOM.BoObjectTypes.BoRecordset);
+
+                    // Doküman numarasına göre ana tablodan bilgileri çek
+                    string query = $"SELECT * FROM [@PROJECT] WHERE DocNum = '{docNumber}'";
+                    recordset.DoQuery(query);
+
+                    if (recordset.RecordCount > 0)
+                    {
+                        // Doküman header bilgilerini doldur
+                        txtProjectName.Value = recordset.Fields.Item("U_ProjectTitle").Value.ToString();
+                        txtUser.Value = recordset.Fields.Item("U_NAME").Value.ToString();
+
+                        // Branch ve Department ComboBox'larını seç
+                        string branch = recordset.Fields.Item("U_Branch").Value.ToString();
+                        string department = recordset.Fields.Item("U_Department").Value.ToString();
+
+                        for (int i = 0; i < cmbBranch.ValidValues.Count; i++)
+                        {
+                            if (cmbBranch.ValidValues.Item(i).Value == branch)
+                            {
+                                cmbBranch.Select(i, SAPbouiCOM.BoSearchKey.psk_Index);
+                                break;
+                            }
+                        }
+
+                        for (int i = 0; i < cmbDepartment.ValidValues.Count; i++)
+                        {
+                            if (cmbDepartment.ValidValues.Item(i).Value == department)
+                            {
+                                cmbDepartment.Select(i, SAPbouiCOM.BoSearchKey.psk_Index);
+                                break;
+                            }
+                        }
+
+                        // Tarih alanlarını doldur
+                        if (recordset.Fields.Item("U_DelDate").Value != null)
+                        {
+                            DateTime deliveryDate = (DateTime)recordset.Fields.Item("U_DelDate").Value;
+                            txtDeliveryDate.Value = deliveryDate.ToString(DATE_FORMAT);
+                        }
+
+                        if (recordset.Fields.Item("U_RegDate").Value != null)
+                        {
+                            DateTime registrationDate = (DateTime)recordset.Fields.Item("U_RegDate").Value;
+                            txtRegistrationDate.Value = registrationDate.ToString(DATE_FORMAT);
+                        }
+
+                        // Proje checkbox'ını ayarla
+                        chkProject.Checked = recordset.Fields.Item("U_IsConverted").Value.ToString() == "Y";
+
+                        // Satırları doldur
+                        LoadDocumentLines(docNumber);
+
+                    }
+                    else
+                    {
+                        ShowMessage($"Belirtilen doküman numarasına ({docNumber}) ait kayıt bulunamadı.");
+                    }
+                }
+                finally
+                {
+                    if (recordset != null)
+                    {
+                        System.Runtime.InteropServices.Marshal.ReleaseComObject(recordset);
+                        recordset = null;
+                        GC.Collect();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Doküman ({docNumber}) yüklenirken hata oluştu", ex);
+                ShowMessage($"Doküman yüklenirken bir hata oluştu: {ex.Message}");
+            }
         }
 
+        /// <summary>
+        /// Doküman satırlarını yükler
+        /// </summary>
+        /// <param name="docNumber">Doküman numarası</param>
+        private void LoadDocumentLines(string docNumber)
+        {
+            SAPbobsCOM.Company company = GetCompany();
+            SAPbobsCOM.Recordset recordset = null;
+
+            try
+            {
+                // Formu dondur
+                this.UIAPIRawForm.Freeze(true);
+
+                recordset = (SAPbobsCOM.Recordset)company.GetBusinessObject(SAPbobsCOM.BoObjectTypes.BoRecordset);
+
+                // Doküman satırlarını çek
+                string query = $"SELECT * FROM [@PROJECTROW] WHERE DocEntry = '{docNumber}' ORDER BY LineId";
+                recordset.DoQuery(query);
+
+                // Mevcut satırları temizle
+                SAPbouiCOM.DBDataSource dbDataSourceLines = UIAPIRawForm.DataSources.DBDataSources.Item(UDO_PROJECT_ROWS_TABLE);
+                dbDataSourceLines.Clear();
+
+                // Satırları doldur
+                int rowIndex = 0;
+
+                while (!recordset.EoF)
+                {
+                    dbDataSourceLines.InsertRecord(rowIndex);
+                    dbDataSourceLines.SetValue("U_ItemCode", rowIndex, recordset.Fields.Item("U_ItemCode").Value.ToString());
+                    dbDataSourceLines.SetValue("U_ItemName", rowIndex, recordset.Fields.Item("U_ItemName").Value.ToString());
+
+                    // Tarih alanını doldur
+                    if (recordset.Fields.Item("U_ReqDate").Value != null)
+                    {
+                        DateTime reqDate = (DateTime)recordset.Fields.Item("U_ReqDate").Value;
+                        dbDataSourceLines.SetValue("U_ReqDate", rowIndex, reqDate.ToString(DATE_FORMAT));
+                    }
+
+                    // Diğer satır alanlarını ekle
+                    // Örnek: dbDataSourceLines.SetValue("U_Quantity", rowIndex, recordset.Fields.Item("U_Quantity").Value.ToString());
+
+                    rowIndex++;
+                    recordset.MoveNext();
+                }
+
+                // Matrix'i güncelle
+                matrixItems.LoadFromDataSource();
+                UpdateMatrixRowNumbers();
+            }
+            catch (Exception ex)
+            {
+                LogError($"Doküman satırları ({docNumber}) yüklenirken hata oluştu", ex);
+                ShowMessage($"Doküman satırları yüklenirken bir hata oluştu: {ex.Message}");
+            }
+            finally
+            {
+                // Formu serbest bırak
+                this.UIAPIRawForm.Freeze(false);
+
+                if (recordset != null)
+                {
+                    System.Runtime.InteropServices.Marshal.ReleaseComObject(recordset);
+                    recordset = null;
+                    GC.Collect();
+                }
+            }
+        }
+        #endregion
         #region Permission Management
 
         /// <summary>
