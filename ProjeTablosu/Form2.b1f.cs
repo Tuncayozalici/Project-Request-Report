@@ -80,6 +80,7 @@ namespace ProjeTablosu
                 new SAPbouiCOM._IButtonEvents_ClickBeforeEventHandler(this.BtnFilter_ClickBefore);
 
             // EditText'lere varsayılan değer ataması ("yyyyMMdd" formatında)
+
             this.txt_reg.Value = DateTime.Today.ToString("yyyyMMdd");
             this.txt_regbit.Value = DateTime.Today.ToString("yyyyMMdd");
 
