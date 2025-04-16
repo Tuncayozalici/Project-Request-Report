@@ -142,8 +142,7 @@ namespace ProjeTablosu
                 // Kayıt tarihini bugünün tarihi ile ayarla
                 txtRegistrationDate.Value = DateTime.Today.ToString(DATE_FORMAT);
 
-                // Kullanıcıya ait yetkilerin kontrolü
-                CheckUserDepartmentPermissions();
+
 
             }
             catch (Exception ex)
@@ -322,77 +321,7 @@ namespace ProjeTablosu
             }
         }
         #endregion
-        #region Permission Management
 
-        /// <summary>
-        /// Checks the current user's department and sets appropriate permissions
-        /// </summary>
-        private void CheckUserDepartmentPermissions()
-        {
-            try
-            {
-                SAPbobsCOM.Company company = GetCompany();
-                SAPbobsCOM.Recordset recordset = null;
-
-                try
-                {
-                    recordset = (SAPbobsCOM.Recordset)company.GetBusinessObject(SAPbobsCOM.BoObjectTypes.BoRecordset);
-                    string currentUser = SAPbouiCOM.Framework.Application.SBO_Application.Company.UserName;
-
-                    // Query to get the user's department
-                    string query = $"SELECT Department FROM OUSR WHERE USER_CODE = '{currentUser}'";
-                    recordset.DoQuery(query);
-
-                    if (recordset.RecordCount > 0)
-                    {
-                        int userDeptCode = Convert.ToInt32(recordset.Fields.Item("Department").Value);
-
-                        // Disable project button if user is not in department 3
-                        if (userDeptCode != 3)
-                        {
-                            DisableProjectButton();
-                        }
-                    }
-                    else
-                    {
-                        // If user record not found, disable project button as a precaution
-                        DisableProjectButton();
-                    }
-                }
-                finally
-                {
-                    // Properly release the recordset
-                    if (recordset != null)
-                    {
-                        System.Runtime.InteropServices.Marshal.ReleaseComObject(recordset);
-                        recordset = null;
-                        GC.Collect();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogError("Error checking user department", ex);
-            }
-        }
-
-        /// <summary>
-        /// Disables the project button on the form
-        /// </summary>
-        private void DisableProjectButton()
-        {
-            try
-            {
-                SAPbouiCOM.Form form = SAPbouiCOM.Framework.Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
-                SAPbouiCOM.Item btnPrjItem = form.Items.Item("btn_prj");
-                btnPrjItem.Enabled = false;
-            }
-            catch (Exception ex)
-            {
-                LogError("Error disabling project button", ex);
-            }
-        }
-        #endregion
 
         #region ComboBox Initialization
 
@@ -729,9 +658,16 @@ namespace ProjeTablosu
                 return false;
             }
 
-            // Check matrix rows
             SAPbouiCOM.Matrix matrix = (SAPbouiCOM.Matrix)this.GetItem("mtx").Specific;
             int rowCount = matrix.RowCount;
+            // Matrix'te hiç satır yoksa uyarı ver ve kayıt işlemini iptal et
+            if (rowCount == 0)
+            {
+                ShowMessage("Lütfen en az bir satır ekleyiniz!");
+                return false;
+            }
+            // Check matrix rows
+          
 
             if (rowCount > 0)
             {
