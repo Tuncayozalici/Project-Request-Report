@@ -2,10 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace ProjeTablosu
 {
@@ -26,7 +23,6 @@ namespace ProjeTablosu
 
         public static void LogToFile(string logMessage)
         {
-            //C:\Users\user\AppData\Roaming\SAPB1AKTARIM\logs
             string logDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ProjeTablosu", "logs");
             try
             {
@@ -39,8 +35,8 @@ namespace ProjeTablosu
                 File.AppendAllText(logFilePath, logMessage);
             }
             catch { }
-
         }
+
         public static string LoadSqlScript(string fileName, SAPbobsCOM.BoDataServerTypes dbServerType)
         {
             Assembly assembly = Assembly.GetExecutingAssembly();
@@ -66,6 +62,7 @@ namespace ProjeTablosu
             }
             return sqlScript;
         }
+
         public static string AppendConditions(string sqlScript, string additionalCondition, string orderScript, SAPbobsCOM.BoDataServerTypes dbServerType)
         {
             if (!string.IsNullOrEmpty(additionalCondition))
@@ -81,7 +78,7 @@ namespace ProjeTablosu
             return sqlScript;
         }
 
-        public static SAPbobsCOM.Recordset executeSQLFromFile(String fileName, Dictionary<String, String> tobeReplace, String AdditionalCondition, String orderScript)
+        public static SAPbobsCOM.Recordset executeSQLFromFile(string fileName, Dictionary<string, string> tobeReplace, string AdditionalCondition, string orderScript)
         {
             SAPbobsCOM.Company bobsCompany = (SAPbobsCOM.Company)ProjeTablosu.Program.oCompany;
             SAPbobsCOM.Recordset tmpRecordSet = (SAPbobsCOM.Recordset)ProjeTablosu.Program.oCompany.GetBusinessObject(SAPbobsCOM.BoObjectTypes.BoRecordset);
@@ -103,6 +100,5 @@ namespace ProjeTablosu
 
             return tmpRecordSet;
         }
-
     }
 }

@@ -6,6 +6,7 @@ using SAPbobsCOM; // DI API için kullanılıyor
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Globalization;
+using ProjeTablosu;  // Helper sınıfını içeren namespace (aynı projede)
 using Application = SAPbouiCOM.Framework.Application;
 
 namespace ProjeTablosu
@@ -62,34 +63,28 @@ namespace ProjeTablosu
             this.btn_fltr = ((SAPbouiCOM.Button)(this.GetItem("btn_fltr").Specific));
             this.check_prj = ((SAPbouiCOM.CheckBox)(this.GetItem("check_prj").Specific));
             this.OnCustomInitialize();
-
         }
 
         public override void OnInitializeFormEvents() { }
 
         /// <summary>
         /// Özel başlangıç işlemleri: DataTable oluşturma, sorgu çalıştırma ve grid’e atama.
-        /// Form açılışında tarih aralığı uygulanır fakat check box filtresi (U_IsConverted şartı)
-        /// devreye alınmaz.
+        /// Form açılışında tarih aralığı uygulanır fakat checkbox filtresi (U_IsConverted) devreye alınmaz.
         /// </summary>
         private void OnCustomInitialize()
         {
-            this.btn_prj.ClickBefore +=
-                new SAPbouiCOM._IButtonEvents_ClickBeforeEventHandler(this.OnProjectButtonClickBefore);
-            this.btn_fltr.ClickBefore +=
-                new SAPbouiCOM._IButtonEvents_ClickBeforeEventHandler(this.BtnFilter_ClickBefore);
+            this.btn_prj.ClickBefore += new SAPbouiCOM._IButtonEvents_ClickBeforeEventHandler(this.OnProjectButtonClickBefore);
+            this.btn_fltr.ClickBefore += new SAPbouiCOM._IButtonEvents_ClickBeforeEventHandler(this.BtnFilter_ClickBefore);
 
             // EditText'lere varsayılan değer ataması ("yyyyMMdd" formatında)
-
             this.txt_reg.Value = DateTime.Today.ToString("yyyyMMdd");
             this.txt_regbit.Value = DateTime.Today.ToString("yyyyMMdd");
 
-            // Form açılışında checkbox filtresi uygulanmadan sorgu çalışsın (onlyConverted = false)
+            // Form açılışında, checkbox filtresi uygulanmadan sorgu çalışsın (onlyConverted = false)
             SAPbouiCOM.DataTable oDataTable = this.UIAPIRawForm.DataSources.DataTables.Add("MyTable");
             oDataTable.ExecuteQuery(BuildQuery(this.txt_reg.Value, this.txt_regbit.Value, false));
             this.grd_liste.DataTable = oDataTable;
             CheckUserDepartmentPermissions();
-
         }
 
         #endregion
@@ -98,147 +93,61 @@ namespace ProjeTablosu
 
         /// <summary>
         /// SQL sorgusunu oluşturur.
-        /// EditText'lerden gelen tarih değerleri "yyyyMMdd" formatındadır; 
-        /// bunlar önce DateTime'a çevrilip sonra "dd.MM.yyyy" formatına dönüştürülür.
-        /// Sonrasında, U_RegDate alanı için BETWEEN koşulu oluşturulur.
-        /// Checkbox değerine göre ek olarak U_IsConverted filtresi eklenir.
+        /// Temel sorgu, gömülü kaynak olarak eklediğiniz "SelectProjectList.sql" dosyasından yüklenir.
+        /// Bu dosya içinde yer alan placeholder'ları (--DATEFILTER-- ve --CONVERTEDFILTER--),
+        /// dinamik olarak oluşturduğunuz filtre koşulları ile değiştirir.
         /// </summary>
         private string BuildQuery(string startDateFilter, string endDateFilter, bool onlyConverted)
         {
-            string formattedStart = "";
-            string formattedEnd = "";
+            // SQL dosyasından temel sorguyu yükle (MSSQL kullanımını varsayalım)
+            string baseQuery = Helper.LoadSqlScript("SelectProjectList.sql", SAPbobsCOM.BoDataServerTypes.dst_MSSQL);
 
-            // Başlangıç tarihi formatlama
-            if (!string.IsNullOrEmpty(startDateFilter))
+            string dateCondition = "";
+            if (!string.IsNullOrEmpty(startDateFilter) && !string.IsNullOrEmpty(endDateFilter))
             {
-                if (DateTime.TryParseExact(startDateFilter, "yyyyMMdd",
-                    CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dt))
+                if (DateTime.TryParseExact(startDateFilter, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dtStart) &&
+                    DateTime.TryParseExact(endDateFilter, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dtEnd))
                 {
-                    formattedStart = dt.ToString("dd.MM.yyyy");
-                }
-                else
-                {
-                    formattedStart = startDateFilter;
+                    string formattedStart = dtStart.ToString("dd.MM.yyyy");
+                    string formattedEnd = dtEnd.ToString("dd.MM.yyyy");
+                    dateCondition = $"AND U_RegDate BETWEEN CONVERT(DATETIME, '{formattedStart}', 104) AND CONVERT(DATETIME, '{formattedEnd}', 104) ";
                 }
             }
-
-            // Bitiş tarihi formatlama
-            if (!string.IsNullOrEmpty(endDateFilter))
+            else if (!string.IsNullOrEmpty(startDateFilter))
             {
-                if (DateTime.TryParseExact(endDateFilter, "yyyyMMdd",
-                    CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dt))
+                if (DateTime.TryParseExact(startDateFilter, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dtStart))
                 {
-                    formattedEnd = dt.ToString("dd.MM.yyyy");
-                }
-                else
-                {
-                    formattedEnd = endDateFilter;
+                    string formattedStart = dtStart.ToString("dd.MM.yyyy");
+                    dateCondition = $"AND U_RegDate >= CONVERT(DATETIME, '{formattedStart}', 104) ";
                 }
             }
-
-            // Sorgu metnini oluşturma
-            StringBuilder query = new StringBuilder();
-            query.Append(@"
-        SELECT 
-            DocNum AS [Döküman Numarası],
-            U_ProjectTitle AS [Proje Talebi Tanımı],
-            U_NAME AS [Talep Eden Kullanıcı],
-            U_Branch AS [Şube],
-            U_Department AS [Departman],
-            U_RegDate AS [Kayıt Tarihi],
-            U_DelDate AS [İstenilen Tarih],
-            CASE 
-                WHEN U_IsConverted = 'Y' THEN 'Evet'
-                ELSE 'Hayır'
-            END AS [Projeye Dönüştürüldü]
-        FROM [@PROJECT]");
-
-            bool whereAdded = false;
-
-            // Tarih aralığı filtresi
-            if (!string.IsNullOrEmpty(formattedStart) && !string.IsNullOrEmpty(formattedEnd))
+            else if (!string.IsNullOrEmpty(endDateFilter))
             {
-                query.Append($" WHERE U_RegDate BETWEEN CONVERT(DATETIME, '{formattedStart}', 104) " +
-                             $"AND CONVERT(DATETIME, '{formattedEnd}', 104) ");
-                whereAdded = true;
-            }
-            else if (!string.IsNullOrEmpty(formattedStart))
-            {
-                query.Append($" WHERE U_RegDate >= CONVERT(DATETIME, '{formattedStart}', 104) ");
-                whereAdded = true;
-            }
-            else if (!string.IsNullOrEmpty(formattedEnd))
-            {
-                query.Append($" WHERE U_RegDate <= CONVERT(DATETIME, '{formattedEnd}', 104) ");
-                whereAdded = true;
+                if (DateTime.TryParseExact(endDateFilter, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dtEnd))
+                {
+                    string formattedEnd = dtEnd.ToString("dd.MM.yyyy");
+                    dateCondition = $"AND U_RegDate <= CONVERT(DATETIME, '{formattedEnd}', 104) ";
+                }
             }
 
-            // Checkbox'a göre U_IsConverted filtresi
+            string convertedCondition = "";
             if (onlyConverted)
-            {
-                if (!whereAdded)
-                {
-                    query.Append(" WHERE ");
-                    whereAdded = true;
-                }
-                else
-                {
-                    query.Append(" AND ");
-                }
-                query.Append(" U_IsConverted = 'Y' ");
-            }
+                convertedCondition = "AND U_IsConverted = 'Y' ";
             else
-            {
-                if (!whereAdded)
-                {
-                    query.Append(" WHERE ");
-                    whereAdded = true;
-                }
-                else
-                {
-                    query.Append(" AND ");
-                }
-                query.Append(" (U_IsConverted <> 'Y' OR U_IsConverted IS NULL) ");
-            }
+                convertedCondition = "AND (U_IsConverted <> 'Y' OR U_IsConverted IS NULL) ";
 
-            // Sorguyu logla
-            LogQuery(query.ToString());
-            return query.ToString();
-        }
+            // Placeholder'ları, oluşturduğunuz koşullarla değiştirin
+            string finalQuery = baseQuery.Replace("--DATEFILTER--", dateCondition)
+                                         .Replace("--CONVERTEDFILTER--", convertedCondition);
 
-        /// <summary>
-        /// SQL sorgusunu loglar: Trace çıktısı ve Logs klasöründeki günlük dosyasına.
-        /// </summary>
-        private void LogQuery(string query)
-        {
-            Trace.WriteLine("SQL Sorgusu: " + query);
-            try
-            {
-                string basePath = AppDomain.CurrentDomain.BaseDirectory;
-                string logPath = System.IO.Path.Combine(basePath, "Logs");
-                if (!System.IO.Directory.Exists(logPath))
-                {
-                    System.IO.Directory.CreateDirectory(logPath);
-                }
-                string fileName = System.IO.Path.Combine(logPath,
-                    "SQLQueryLog_" + DateTime.Now.ToString("yyyyMMdd") + ".txt");
-                string logRecord = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
-                                  + " - " + query + Environment.NewLine;
-                System.IO.File.AppendAllText(fileName, logRecord);
-            }
-            catch (Exception ex)
-            {
-                Trace.WriteLine("Log kaydı yazılırken hata oluştu: " + ex.Message);
-            }
+            Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Executing Query:\n{finalQuery}\n");
+            return finalQuery;
         }
 
         #endregion
 
         #region Button Event Handlers
 
-        /// <summary>
-        /// Filtre butonuna tıklandığında, girilen kriterlere göre grid verilerini yeniler.
-        /// </summary>
         private void BtnFilter_ClickBefore(object sboObject, SBOItemEventArg pVal, out bool BubbleEvent)
         {
             BubbleEvent = true;
@@ -248,8 +157,7 @@ namespace ProjeTablosu
                 string endFilter = txt_regbit.Value.Trim();
                 bool onlyConverted = check_prj.Checked;
 
-                SAPbouiCOM.DataTable oDataTable =
-                    this.UIAPIRawForm.DataSources.DataTables.Item("MyTable");
+                SAPbouiCOM.DataTable oDataTable = this.UIAPIRawForm.DataSources.DataTables.Item("MyTable");
                 oDataTable.ExecuteQuery(BuildQuery(startFilter, endFilter, onlyConverted));
             }
             catch (Exception ex)
@@ -259,9 +167,6 @@ namespace ProjeTablosu
             }
         }
 
-        /// <summary>
-        /// Proje oluştur butonuna tıklandığında, seçili satırla yeni proje oluşturur.
-        /// </summary>
         private void OnProjectButtonClickBefore(object sboObject, SBOItemEventArg pVal, out bool BubbleEvent)
         {
             BubbleEvent = true;
@@ -287,9 +192,6 @@ namespace ProjeTablosu
 
         #region Project Management
 
-        /// <summary>
-        /// Grid’de seçili satırdaki verilerle SAP Project Management üzerinde yeni proje oluşturur.
-        /// </summary>
         private void CreateNewProject()
         {
             if (this.grd_liste.Rows.SelectedRows.Count == 0)
@@ -318,19 +220,14 @@ namespace ProjeTablosu
             try
             {
                 companyService = company.GetCompanyService();
-                projectService = (SAPbobsCOM.ProjectManagementService)companyService
-                                 .GetBusinessService(ServiceTypes.ProjectManagementService);
+                projectService = (SAPbobsCOM.ProjectManagementService)companyService.GetBusinessService(ServiceTypes.ProjectManagementService);
 
-                // Yeni proje için veri objesi
                 SAPbobsCOM.PM_ProjectDocumentData newProject =
-                    (SAPbobsCOM.PM_ProjectDocumentData)projectService
-                    .GetDataInterface(ProjectManagementServiceDataInterfaces.pmsPM_ProjectDocumentData);
+                    (SAPbobsCOM.PM_ProjectDocumentData)projectService.GetDataInterface(ProjectManagementServiceDataInterfaces.pmsPM_ProjectDocumentData);
 
-                // Proje adı
                 string projectName = $"{projectTitle} {docEntry}";
                 newProject.ProjectName = projectName;
 
-                // U_ProDocEntry alanına doküman numarası
                 for (int i = 0; i < newProject.UserFields.Count; i++)
                 {
                     if (newProject.UserFields.Item(i).Name == "U_ProDocEntry")
@@ -340,11 +237,9 @@ namespace ProjeTablosu
                     }
                 }
 
-                // Kayıt tarihi
                 if (!string.IsNullOrEmpty(regDateStr))
                 {
-                    if (DateTime.TryParseExact(regDateStr, ALLOWED_DATE_FORMATS,
-                        CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime startDate))
+                    if (DateTime.TryParseExact(regDateStr, ALLOWED_DATE_FORMATS, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime startDate))
                     {
                         newProject.StartDate = startDate;
                     }
@@ -355,11 +250,9 @@ namespace ProjeTablosu
                     }
                 }
 
-                // İstenilen tarih
                 if (!string.IsNullOrEmpty(delDateStr))
                 {
-                    if (DateTime.TryParseExact(delDateStr, ALLOWED_DATE_FORMATS,
-                        CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dueDate))
+                    if (DateTime.TryParseExact(delDateStr, ALLOWED_DATE_FORMATS, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dueDate))
                     {
                         newProject.DueDate = dueDate;
                     }
@@ -370,21 +263,17 @@ namespace ProjeTablosu
                     }
                 }
 
-                // Proje ekleme
                 SAPbobsCOM.PM_ProjectDocumentParams newProjectParams = projectService.AddProject(newProject);
                 int newProjectAbsEntry = newProjectParams.AbsEntry;
 
-                // İsteğe bağlı SQL güncellemesi (örnek)
                 recordset = (SAPbobsCOM.Recordset)company.GetBusinessObject(BoObjectTypes.BoRecordset);
                 string updateQuery = $"UPDATE OPMG SET U_ProDocEntry = '{docEntry}' WHERE AbsEntry = {newProjectAbsEntry}";
-                // recordset.DoQuery(updateQuery); // Gerekirse
+                // Gerekirse update sorgusu çalıştırılabilir: recordset.DoQuery(updateQuery);
 
-                // Grid üzerinde ilgili satırın "Projeye Dönüştürüldü" alanını 'Evet' yap
                 dt.SetValue("Projeye Dönüştürüldü", selectedRow, "Evet");
                 this.UIAPIRawForm.Freeze(false);
 
-                ShowStatusMessage($"Proje başarıyla oluşturuldu. Proje Kodu: {newProjectAbsEntry}",
-                                  BoStatusBarMessageType.smt_Success);
+                ShowStatusMessage($"Proje başarıyla oluşturuldu. Proje Kodu: {newProjectAbsEntry}", BoStatusBarMessageType.smt_Success);
             }
             catch (Exception ex)
             {
@@ -393,7 +282,6 @@ namespace ProjeTablosu
             }
             finally
             {
-                // COM nesnelerini serbest bırakma
                 if (recordset != null)
                 {
                     Marshal.ReleaseComObject(recordset);
@@ -444,7 +332,7 @@ namespace ProjeTablosu
             BubbleEvent = true;
             try
             {
-                SAPbouiCOM.Grid clickedGrid = sboObject as SAPbouiCOM.Grid;
+                Grid clickedGrid = sboObject as Grid;
                 if (clickedGrid == null) return;
                 int rowIndex = pVal.Row;
                 if (rowIndex < 0) return;
@@ -458,42 +346,33 @@ namespace ProjeTablosu
                 Form1 form1 = new Form1();
                 form1.SetDocNum(DocNum);
                 form1.Show();
-
             }
             catch (Exception ex)
             {
                 Application.SBO_Application.MessageBox("Çift tıklama işlemi sırasında hata: " + ex.Message);
             }
-
         }
 
         #endregion
+
         #region Permission Management
 
-        /// <summary>
-        /// Checks the current user's department and sets appropriate permissions
-        /// </summary>
         private void CheckUserDepartmentPermissions()
         {
             try
             {
                 SAPbobsCOM.Company company = GetCompany();
                 SAPbobsCOM.Recordset recordset = null;
-
                 try
                 {
                     recordset = (SAPbobsCOM.Recordset)company.GetBusinessObject(SAPbobsCOM.BoObjectTypes.BoRecordset);
-                    string currentUser = SAPbouiCOM.Framework.Application.SBO_Application.Company.UserName;
-
-                    // Query to get the user's department
+                    string currentUser = Application.SBO_Application.Company.UserName;
                     string query = $"SELECT Department FROM OUSR WHERE USER_CODE = '{currentUser}'";
                     recordset.DoQuery(query);
 
                     if (recordset.RecordCount > 0)
                     {
                         int userDeptCode = Convert.ToInt32(recordset.Fields.Item("Department").Value);
-
-                        // Disable project button if user is not in department 3
                         if (userDeptCode != 3)
                         {
                             DisableProjectButton();
@@ -501,16 +380,14 @@ namespace ProjeTablosu
                     }
                     else
                     {
-                        // If user record not found, disable project button as a precaution
                         DisableProjectButton();
                     }
                 }
                 finally
                 {
-                    // Properly release the recordset
                     if (recordset != null)
                     {
-                        System.Runtime.InteropServices.Marshal.ReleaseComObject(recordset);
+                        Marshal.ReleaseComObject(recordset);
                         recordset = null;
                         GC.Collect();
                     }
@@ -522,14 +399,11 @@ namespace ProjeTablosu
             }
         }
 
-        /// <summary>
-        /// Disables the project button on the form
-        /// </summary>
         private void DisableProjectButton()
         {
             try
             {
-                SAPbouiCOM.Form form = SAPbouiCOM.Framework.Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
+                SAPbouiCOM.Form form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
                 SAPbouiCOM.Item btnPrjItem = form.Items.Item("btn_prj");
                 btnPrjItem.Enabled = false;
             }
@@ -538,6 +412,7 @@ namespace ProjeTablosu
                 LogError("Error disabling project button", ex);
             }
         }
+
         #endregion
     }
 }
