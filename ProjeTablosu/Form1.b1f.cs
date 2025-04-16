@@ -170,7 +170,14 @@ namespace ProjeTablosu
                     {
                         { "@DocNum", docNumber }
                     };
-                    recordset = Helper.executeSQLFromFile("SelectProject", replacements, string.Empty, string.Empty);
+                    if (company.DbServerType != SAPbobsCOM.BoDataServerTypes.dst_HANADB)
+                    {
+                        recordset = Helper.executeSQLFromFile("SelectProject", replacements, string.Empty, string.Empty);
+                    }
+                    else
+                    {
+                        recordset = Helper.executeSQLFromFile("SelectProjectHana", replacements, string.Empty, string.Empty);
+                    }
 
                     if (recordset.RecordCount > 0)
                     {
@@ -251,7 +258,14 @@ namespace ProjeTablosu
                 {
                     { "@DocNum", docNumber }
                 };
-                recordset = Helper.executeSQLFromFile("SelectProjectRows", replacements, string.Empty, string.Empty);
+                if (company.DbServerType != SAPbobsCOM.BoDataServerTypes.dst_HANADB)
+                {
+                    recordset = Helper.executeSQLFromFile("SelectProjectRows", replacements, string.Empty, string.Empty);
+                }
+                else
+                {
+                    recordset = Helper.executeSQLFromFile("SelectProjectRowsHana", replacements, string.Empty, string.Empty);
+                }
 
                 SAPbouiCOM.DBDataSource dbDataSourceLines = UIAPIRawForm.DataSources.DBDataSources.Item(UDO_PROJECT_ROWS_TABLE);
                 dbDataSourceLines.Clear();
@@ -300,7 +314,14 @@ namespace ProjeTablosu
             try
             {
                 // SQL dosyası "SelectBranch.sql" içeriği: "SELECT DISTINCT Name FROM OUBR"
-                recordset = Helper.executeSQLFromFile("SelectBranch", new Dictionary<string, string>(), string.Empty, string.Empty);
+                if (company.DbServerType != SAPbobsCOM.BoDataServerTypes.dst_HANADB)
+                {
+                    recordset = Helper.executeSQLFromFile("SelectBranch", new Dictionary<string, string>(), string.Empty, string.Empty);
+                }
+                else
+                {
+                    recordset = Helper.executeSQLFromFile("SelectBranchHana", new Dictionary<string, string>(), string.Empty, string.Empty);
+                }
                 ClearComboBoxValues(cmbBranch);
                 if (recordset.RecordCount > 0)
                 {
@@ -334,7 +355,14 @@ namespace ProjeTablosu
             try
             {
                 // SQL dosyası "SelectDepartment.sql" içeriği: "SELECT DISTINCT Name FROM OUDP"
-                recordset = Helper.executeSQLFromFile("SelectDepartment", new Dictionary<string, string>(), string.Empty, string.Empty);
+                if (company.DbServerType != SAPbobsCOM.BoDataServerTypes.dst_HANADB)
+                {
+                    recordset = Helper.executeSQLFromFile("SelectDepartment", new Dictionary<string, string>(), string.Empty, string.Empty);
+                }
+                else
+                {
+                    recordset = Helper.executeSQLFromFile("SelectDepartmentHana", new Dictionary<string, string>(), string.Empty, string.Empty);
+                }
                 ClearComboBoxValues(cmbDepartment);
                 if (recordset.RecordCount > 0)
                 {
