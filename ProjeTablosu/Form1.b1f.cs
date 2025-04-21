@@ -32,12 +32,25 @@ namespace ProjeTablosu
         private Button btnAddRow;
         #endregion
 
-        #region Constants
+        #region Constants & Formats
         private const string MATRIX_COLUMN_ITEMCODE = "KalemKodu";
         private const string MATRIX_COLUMN_ITEMNAME = "Kalem_Tan";
-        private const string DATE_FORMAT = "yyyyMMdd";
+        private const string DATE_FORMAT = "yyyyMMdd";          // MSSQL için
         private const string UDO_PROJECT_TABLE = "@PROJECT";
         private const string UDO_PROJECT_ROWS_TABLE = "@PROJECTROW";
+
+        // Kabul edilecek formatlar
+        private readonly string[] ALLOWED_DATE_FORMATS = new string[]
+        {
+            "dd/MM/yyyy",
+            "dd.MM.yyyy",
+            "yyyyMMdd",
+            "MM/dd/yyyy",
+            "dd.MM.yyyy HH:mm:ss",
+            "dd/MM/yyyy HH:mm:ss",
+            "dd-MMM-yy hh:mm:ss tt",    // örn: 23-Apr-25 12:00:00 AM
+            "dd-MMM-yyyy hh:mm:ss tt"   // örn: 23-Apr-2025 12:00:00 AM
+        };
         #endregion
 
         /// <summary>
@@ -72,7 +85,6 @@ namespace ProjeTablosu
                 this.btnCancel = ((SAPbouiCOM.Button)(this.GetItem("2").Specific));
                 this.btnAddRow = ((SAPbouiCOM.Button)(this.GetItem("btn_newrow").Specific));
                 this.btnAddRow.PressedAfter += new SAPbouiCOM._IButtonEvents_PressedAfterEventHandler(this.OnAddRowButtonPressedAfter);
-                this.btnOk.PressedAfter += new SAPbouiCOM._IButtonEvents_PressedAfterEventHandler(this.OnOkButtonPressedAfter);
             }
             catch (Exception ex)
             {
@@ -109,12 +121,17 @@ namespace ProjeTablosu
             BubbleEvent = true;
             if (pVal.MenuUID == "1282" && pVal.BeforeAction == false)
             {
-                SAPbouiCOM.Form form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
-                var Usern = (SAPbouiCOM.EditText)form.Items.Item("txt_kul").Specific;
-                if (string.IsNullOrEmpty(Usern.Value))
-                {
-                    Usern.Value = Program.oCompany.UserName;
-                }
+                var form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
+                var txtUser = (SAPbouiCOM.EditText)form.Items.Item("txt_kul").Specific;
+                var txtRegDate = (SAPbouiCOM.EditText)form.Items.Item("txt_kayıt").Specific;
+
+                // Kullanıcı adı
+                if (string.IsNullOrEmpty(txtUser.Value))
+                    txtUser.Value = Program.oCompany.UserName;
+
+                // Kayıt tarihi
+                if (string.IsNullOrEmpty(txtRegDate.Value))
+                    txtRegDate.Value = DateTime.Today.ToString(DATE_FORMAT);
             }
         }
 
@@ -134,7 +151,9 @@ namespace ProjeTablosu
                 txtUser.Value = company.UserName;
 
                 // Set registration date (today)
-                txtRegistrationDate.Value = DateTime.Today.ToString(DATE_FORMAT);
+                this.txtRegistrationDate.Value = DateTime.Today.ToString("yyyyMMdd");
+
+
             }
             catch (Exception ex)
             {
@@ -467,6 +486,7 @@ namespace ProjeTablosu
         private void OnOkButtonPressedBefore(object sboObject, SBOItemEventArg pVal, out bool BubbleEvent)
         {
             BubbleEvent = true;
+
             try
             {
                 if (!ValidateRequiredFields())
@@ -482,13 +502,7 @@ namespace ProjeTablosu
             }
         }
 
-        private void OnOkButtonPressedAfter(object sboObject, SBOItemEventArg pVal)
-        {
-            if (pVal.ActionSuccess)
-            {
-                ShowMessage("Proje başarıyla kaydedildi.");
-            }
-        }
+
 
         private void OnAddRowButtonPressedAfter(object sboObject, SBOItemEventArg pVal)
         {
@@ -506,38 +520,75 @@ namespace ProjeTablosu
         }
         #endregion
 
-        #region Matrix Operations
+        #region Date Parsing Helper
+        /// <summary>
+        /// Verilen string'i ALLOWED_DATE_FORMATS üzerinden deniyor.
+        /// Başarılı olursa out parametrelerine set ediyor.
+        /// </summary>
+        private bool TryDetectDateFormat(string dateString, out DateTime parsedDate, out string usedFormat)
+        {
+            parsedDate = DateTime.MinValue;
+            usedFormat = null;
 
+            foreach (var fmt in ALLOWED_DATE_FORMATS)
+            {
+                if (DateTime.TryParseExact(
+                        dateString,
+                        fmt,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.None,
+                        out parsedDate))
+                {
+                    usedFormat = fmt;
+                    return true;
+                }
+            }
+            return false;
+        }
+        #endregion
+
+        #region Matrix Operations
         private void AddNewMatrixRow()
         {
-            this.UIAPIRawForm.Freeze(true);
+            UIAPIRawForm.Freeze(true);
             try
             {
-                matrixItems.FlushToDataSource();
-                SAPbouiCOM.DBDataSource dbDataSourceLines = UIAPIRawForm.DataSources.DBDataSources.Item(UDO_PROJECT_ROWS_TABLE);
-                if (dbDataSourceLines.Size == 1 && string.IsNullOrEmpty(dbDataSourceLines.GetValue("U_ItemName", 0).Trim()))
+                // Matrix’teki mevcut verileri DataSource’a bas
+                try { matrixItems.FlushToDataSource(); } catch { /* boş tarih satırı HANA’da hata fırlatabilir → yok say */ }
+
+                var lines = UIAPIRawForm.DataSources.DBDataSources.Item(UDO_PROJECT_ROWS_TABLE);
+
+                // Gereksiz boş ilk satırı sil
+                if (lines.Size == 1 && string.IsNullOrWhiteSpace(lines.GetValue("U_ItemName", 0)))
+                    lines.RemoveRecord(0);
+
+                // Yeni satırı ekle
+                int row = lines.Size;
+                lines.InsertRecord(row);
+                lines.SetValue("U_ItemCode", row, "");
+                lines.SetValue("U_ItemName", row, "");
+
+                // Teslim tarihini algıla
+                if (!TryDetectDateFormat(txtDeliveryDate.Value, out DateTime del, out _))
                 {
-                    dbDataSourceLines.RemoveRecord(0);
+                    ShowMessage($"Tarih formatı anlaşılamadı: {txtDeliveryDate.Value}");
+                    return;
                 }
-                int rowIndex = dbDataSourceLines.Size;
-                dbDataSourceLines.InsertRecord(rowIndex);
-                dbDataSourceLines.Offset = rowIndex;
-                dbDataSourceLines.SetValue("U_ItemCode", rowIndex, "");
-                dbDataSourceLines.SetValue("U_ItemName", rowIndex, "");
-                dbDataSourceLines.SetValue("U_ReqDate", rowIndex, txtDeliveryDate.Value);
+
+                // *** Kritik kısım: UI için daima YYYYMMDD ***
+                lines.SetValue("U_ReqDate", row, del.ToString("yyyyMMdd"));
+
+                // Matrix’i yeniden yükle
                 matrixItems.LoadFromDataSource();
                 matrixItems.SetLineData(matrixItems.RowCount);
                 UpdateMatrixRowNumbers();
             }
             catch (Exception ex)
             {
-                Helper.LogToFile($"Error adding new matrix row: {ex.Message}\n{ex.StackTrace}\n");
-                ShowMessage("Error adding new row: " + ex.Message);
+                Helper.LogToFile($"Add row err: {ex}");
+                ShowMessage("Satır eklenirken hata: " + ex.Message);
             }
-            finally
-            {
-                this.UIAPIRawForm.Freeze(false);
-            }
+            finally { UIAPIRawForm.Freeze(false); }
         }
 
         private void UpdateMatrixRowNumbers()
@@ -553,18 +604,39 @@ namespace ProjeTablosu
 
         private bool ValidateRequiredFields()
         {
+
+            var form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
+            if (form.Mode == SAPbouiCOM.BoFormMode.fm_FIND_MODE)
+            {
+                return true;
+            }
             if (string.IsNullOrEmpty(txtProjectName.Value.Trim()) ||
                 string.IsNullOrEmpty(txtUser.Value.Trim()) ||
                 string.IsNullOrEmpty(txtDeliveryDate.Value.Trim()) ||
                 string.IsNullOrEmpty(txtRegistrationDate.Value.Trim()))
             {
-                ShowMessage("Please fill in all required text fields!");
+                ShowMessage("Lütfen tüm zorunlu alanları doldurunuz!");
                 return false;
             }
             if (cmbBranch.Selected == null || string.IsNullOrEmpty(cmbBranch.Selected.Value) ||
                 cmbDepartment.Selected == null || string.IsNullOrEmpty(cmbDepartment.Selected.Value))
             {
-                ShowMessage("Please select both branch and department!");
+                ShowMessage("Lütfen şube ve departman seçiniz!");
+                return false;
+            }
+            DateTime regDate, delDate;
+            const string DATE_FORMAT = "yyyyMMdd";
+            bool regOk = DateTime.TryParseExact(txtRegistrationDate.Value, DATE_FORMAT, CultureInfo.InvariantCulture, DateTimeStyles.None, out regDate);
+            bool delOk = DateTime.TryParseExact(txtDeliveryDate.Value, DATE_FORMAT, CultureInfo.InvariantCulture, DateTimeStyles.None, out delDate);
+
+            if (!regOk || !delOk)
+            {
+                ShowMessage("Tarih formatı hatalı! Lütfen YYYYMMDD formatında giriniz.");
+                return false;
+            }
+            if (regDate > delDate)
+            {
+                ShowMessage("Kayıt tarihi, teslim tarihinden büyük olamaz.");
                 return false;
             }
             SAPbouiCOM.Matrix matrix = (SAPbouiCOM.Matrix)this.GetItem("mtx").Specific;
