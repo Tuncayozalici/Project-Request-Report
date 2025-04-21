@@ -30,6 +30,7 @@ namespace ProjeTablosu
         private Button btnOk;
         private Button btnCancel;
         private Button btnAddRow;
+        private Button btnDellRow;
         #endregion
 
         #region Constants & Formats
@@ -46,6 +47,8 @@ namespace ProjeTablosu
             "dd.MM.yyyy",
             "yyyyMMdd",
             "MM/dd/yyyy",
+            "yyyy-MM-dd",        // HANA formatı
+            "yyyy/MM/dd",        // HANA formatı
             "dd.MM.yyyy HH:mm:ss",
             "dd/MM/yyyy HH:mm:ss",
             "dd-MMM-yy hh:mm:ss tt",    // örn: 23-Apr-25 12:00:00 AM
@@ -85,6 +88,9 @@ namespace ProjeTablosu
                 this.btnCancel = ((SAPbouiCOM.Button)(this.GetItem("2").Specific));
                 this.btnAddRow = ((SAPbouiCOM.Button)(this.GetItem("btn_newrow").Specific));
                 this.btnAddRow.PressedAfter += new SAPbouiCOM._IButtonEvents_PressedAfterEventHandler(this.OnAddRowButtonPressedAfter);
+                this.btnDellRow = ((SAPbouiCOM.Button)(this.GetItem("Item_3").Specific));
+                this.btnDellRow.PressedAfter += new SAPbouiCOM._IButtonEvents_PressedAfterEventHandler(this.OnDellRowButtonPressedAfter);
+
             }
             catch (Exception ex)
             {
@@ -518,6 +524,20 @@ namespace ProjeTablosu
                 }
             }
         }
+        private void OnDellRowButtonPressedAfter(object sboObject, SBOItemEventArg pVal)
+        {
+            if (pVal.ActionSuccess)
+            {
+                try
+                {
+                    DellMatrixRow();
+                }
+                catch (Exception ex)
+                {
+                    Helper.LogToFile($"Error in OnAddRowButtonPressedAfter: {ex.Message}\n{ex.StackTrace}\n");
+                }
+            }
+        }
         #endregion
 
         #region Date Parsing Helper
@@ -590,6 +610,55 @@ namespace ProjeTablosu
             }
             finally { UIAPIRawForm.Freeze(false); }
         }
+        private void DellMatrixRow()
+        {
+            UIAPIRawForm.Freeze(true);
+            try
+            {
+                // 1) Matrix üzerindeki değişiklikleri DataSource'a aktar
+                matrixItems.FlushToDataSource();
+
+                // 2) UDO child satırlarının DBDataSource'unu al
+                var lines = UIAPIRawForm.DataSources
+                              .DBDataSources
+                              .Item(UDO_PROJECT_ROWS_TABLE);
+
+                // 3) Seçili satırı bul (1-based)
+                int selectedRow = matrixItems.GetNextSelectedRow(
+                                      0,
+                                      SAPbouiCOM.BoOrderType.ot_RowOrder
+                                  );
+                if (selectedRow <= 0)
+                {
+                    ShowMessage("Lütfen silmek istediğiniz satırı seçin!");
+                    return;
+                }
+
+                // 4) 1-based → 0-based index dönüşümü
+                int index = selectedRow - 1;
+
+                // 5) Geçerli index mi? Sil ve UI’ı yenile
+                if (index >= 0 && index < lines.Size)
+                {
+                    lines.RemoveRecord(index);
+                    matrixItems.LoadFromDataSource();
+                    UpdateMatrixRowNumbers();
+                }
+                else
+                {
+                    ShowMessage($"Silinecek satır bulunamadı: {selectedRow}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Helper.LogToFile($"Delete row err: {ex.Message}\n{ex.StackTrace}");
+                ShowMessage("Satır silinirken hata oluştu: " + ex.Message);
+            }
+            finally
+            {
+                UIAPIRawForm.Freeze(false);
+            }
+        }
 
         private void UpdateMatrixRowNumbers()
         {
@@ -604,34 +673,31 @@ namespace ProjeTablosu
 
         private bool ValidateRequiredFields()
         {
-
             var form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
             if (form.Mode == SAPbouiCOM.BoFormMode.fm_FIND_MODE)
-            {
                 return true;
-            }
-            if (string.IsNullOrEmpty(txtProjectName.Value.Trim()) ||
-                string.IsNullOrEmpty(txtUser.Value.Trim()) ||
-                string.IsNullOrEmpty(txtDeliveryDate.Value.Trim()) ||
-                string.IsNullOrEmpty(txtRegistrationDate.Value.Trim()))
+
+            // Başlık alanları
+            if (string.IsNullOrWhiteSpace(txtProjectName.Value) ||
+                string.IsNullOrWhiteSpace(txtUser.Value) ||
+                string.IsNullOrWhiteSpace(txtDeliveryDate.Value) ||
+                string.IsNullOrWhiteSpace(txtRegistrationDate.Value))
             {
                 ShowMessage("Lütfen tüm zorunlu alanları doldurunuz!");
                 return false;
             }
-            if (cmbBranch.Selected == null || string.IsNullOrEmpty(cmbBranch.Selected.Value) ||
-                cmbDepartment.Selected == null || string.IsNullOrEmpty(cmbDepartment.Selected.Value))
+
+            if (cmbBranch.Selected == null || cmbDepartment.Selected == null)
             {
                 ShowMessage("Lütfen şube ve departman seçiniz!");
                 return false;
             }
-            DateTime regDate, delDate;
-            const string DATE_FORMAT = "yyyyMMdd";
-            bool regOk = DateTime.TryParseExact(txtRegistrationDate.Value, DATE_FORMAT, CultureInfo.InvariantCulture, DateTimeStyles.None, out regDate);
-            bool delOk = DateTime.TryParseExact(txtDeliveryDate.Value, DATE_FORMAT, CultureInfo.InvariantCulture, DateTimeStyles.None, out delDate);
 
-            if (!regOk || !delOk)
+            // Başlık tarihleri: farklı formatları kabul et
+            if (!TryDetectDateFormat(txtRegistrationDate.Value, out DateTime regDate, out _) ||
+                !TryDetectDateFormat(txtDeliveryDate.Value, out DateTime delDate, out _))
             {
-                ShowMessage("Tarih formatı hatalı! Lütfen YYYYMMDD formatında giriniz.");
+                ShowMessage($"Tarih formatı hatalı! Geçerli formatlar: {string.Join(", ", ALLOWED_DATE_FORMATS)}");
                 return false;
             }
             if (regDate > delDate)
@@ -639,28 +705,38 @@ namespace ProjeTablosu
                 ShowMessage("Kayıt tarihi, teslim tarihinden büyük olamaz.");
                 return false;
             }
-            SAPbouiCOM.Matrix matrix = (SAPbouiCOM.Matrix)this.GetItem("mtx").Specific;
-            int rowCount = matrix.RowCount;
-            if (rowCount == 0)
+
+            // Matrix satırları – önce UI’dan DataSource’a yaz
+            try { matrixItems.FlushToDataSource(); } catch { /* ignore */ }
+            var lines = UIAPIRawForm.DataSources.DBDataSources.Item(UDO_PROJECT_ROWS_TABLE);
+
+            if (lines.Size == 0)
             {
                 ShowMessage("Lütfen en az bir satır ekleyiniz!");
                 return false;
             }
-            if (rowCount > 0)
+
+            // Her satırı kontrol et
+            for (int row = 0; row < lines.Size; row++)
             {
-                for (int i = 1; i <= rowCount; i++)
+                string itemName = lines.GetValue("U_ItemName", row)?.Trim() ?? "";
+                string reqDateStr = lines.GetValue("U_ReqDate", row)?.Trim() ?? "";
+
+                if (string.IsNullOrEmpty(itemName) || string.IsNullOrEmpty(reqDateStr))
                 {
-                    string kalemTan = ((SAPbouiCOM.EditText)matrix.Columns.Item("Kalem_Tan").Cells.Item(i).Specific).Value.Trim();
-                    string tarih = ((SAPbouiCOM.EditText)matrix.Columns.Item("Tarih").Cells.Item(i).Specific).Value.Trim();
-                    if (string.IsNullOrEmpty(kalemTan) || string.IsNullOrEmpty(tarih))
-                    {
-                        ShowMessage($"Row {i}: Item definition and date fields cannot be empty!");
-                        return false;
-                    }
+                    ShowMessage($"Satır {row + 1}: Kalem ve Tarih alanları boş bırakılamaz!");
+                    return false;
+                }
+                if (!TryDetectDateFormat(reqDateStr, out _, out _))
+                {
+                    ShowMessage($"Satır {row + 1}: Tarih formatı hatalı ({reqDateStr})!");
+                    return false;
                 }
             }
+
             return true;
         }
+
         #endregion
 
         #region Utility Methods
