@@ -52,6 +52,7 @@
     <None Include="Form1.b1f">
       <FormCategory>UserForm</FormCategory>
     </None>
+    <Compile Include="MessagesHelper.cs" />
     <Compile Include="Helper.cs" />
     <Compile Include="Form1.b1f.cs">
       <DependentUpon>Form1.b1f</DependentUpon>
