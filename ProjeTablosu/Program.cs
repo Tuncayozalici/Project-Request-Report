@@ -108,9 +108,10 @@ namespace ProjeTablosu
                 new Dictionary<string, string>
                 {
                     { "Y", "Evet" },
-                    { "N", "Hayır" }
+                    { "N", "Reddedildi" },
+                    { "P", "Beklemede" }
                 });
-
+                CreateField("PROJECT", "Reject", "Reddedilme Nedeni", BoFieldTypes.db_Memo, 0, null);
                 CreateField("OPMG", "ProDocEntry", "Proje Tablosu Belge Numarası", BoFieldTypes.db_Numeric, 0, null);
 
 

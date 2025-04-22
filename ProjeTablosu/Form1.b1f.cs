@@ -20,17 +20,18 @@ namespace ProjeTablosu
         #region Form Controls
         private SAPbouiCOM.EditText txtProjectName;
         private SAPbouiCOM.EditText txt_DocNum;
+        private SAPbouiCOM.EditText txt_reject;
         private SAPbouiCOM.EditText txtUser;
         private SAPbouiCOM.ComboBox cmbBranch;
         private SAPbouiCOM.ComboBox cmbDepartment;
         private SAPbouiCOM.EditText txtDeliveryDate;
         private SAPbouiCOM.EditText txtRegistrationDate;
-        private SAPbouiCOM.CheckBox chkProject;
         private SAPbouiCOM.Matrix matrixItems;
         private Button btnOk;
         private Button btnCancel;
         private Button btnAddRow;
         private Button btnDellRow;
+        private SAPbouiCOM.ComboBox convertedComboBox;
         #endregion
 
         #region Constants & Formats
@@ -80,7 +81,6 @@ namespace ProjeTablosu
                 this.cmbDepartment = ((SAPbouiCOM.ComboBox)(this.GetItem("cmb_dep").Specific));
                 this.txtDeliveryDate = ((SAPbouiCOM.EditText)(this.GetItem("txt_teslim").Specific));
                 this.txtRegistrationDate = ((SAPbouiCOM.EditText)(this.GetItem("txt_kayıt").Specific));
-                this.chkProject = ((SAPbouiCOM.CheckBox)(this.GetItem("cb_proje").Specific));
                 this.matrixItems = ((SAPbouiCOM.Matrix)(this.GetItem("mtx").Specific));
                 this.matrixItems.ChooseFromListAfter += new SAPbouiCOM._IMatrixEvents_ChooseFromListAfterEventHandler(this.OnMatrixChooseFromListAfter);
                 this.btnOk = ((SAPbouiCOM.Button)(this.GetItem("1").Specific));
@@ -90,6 +90,13 @@ namespace ProjeTablosu
                 this.btnAddRow.PressedAfter += new SAPbouiCOM._IButtonEvents_PressedAfterEventHandler(this.OnAddRowButtonPressedAfter);
                 this.btnDellRow = ((SAPbouiCOM.Button)(this.GetItem("Item_3").Specific));
                 this.btnDellRow.PressedAfter += new SAPbouiCOM._IButtonEvents_PressedAfterEventHandler(this.OnDellRowButtonPressedAfter);
+                var item = this.UIAPIRawForm.Items.Item("Item_6");
+                if (item != null && item.Type == SAPbouiCOM.BoFormItemTypes.it_COMBO_BOX)
+                {
+                    this.convertedComboBox = (SAPbouiCOM.ComboBox)item.Specific;
+                }
+                this.txt_reject = ((SAPbouiCOM.EditText)(this.GetItem("Item_11").Specific));
+
 
             }
             catch (Exception ex)
@@ -151,6 +158,10 @@ namespace ProjeTablosu
                 // Initialize combo boxes
                 InitializeBranchComboBox();
                 InitializeDepartmentComboBox();
+                InitializeConvertedComboBox();
+                convertedComboBox.Select("P", SAPbouiCOM.BoSearchKey.psk_ByValue); // Varsayılan olarak Beklemede
+
+
                 SAPbobsCOM.Company company = GetCompany();
 
                 // Set user name
@@ -209,10 +220,11 @@ namespace ProjeTablosu
                         // Fill header fields
                         txtProjectName.Value = recordset.Fields.Item("U_ProjectTitle").Value.ToString();
                         txtUser.Value = recordset.Fields.Item("U_NAME").Value.ToString();
-
+                        txt_reject.Value = recordset.Fields.Item("U_Reject").Value.ToString();
                         // Select Branch and Department in ComboBoxes
                         string branch = recordset.Fields.Item("U_Branch").Value.ToString();
                         string department = recordset.Fields.Item("U_Department").Value.ToString();
+                        string converted = recordset.Fields.Item("U_IsConverted").Value.ToString();
                         for (int i = 0; i < cmbBranch.ValidValues.Count; i++)
                         {
                             if (cmbBranch.ValidValues.Item(i).Value == branch)
@@ -242,9 +254,14 @@ namespace ProjeTablosu
                             txtRegistrationDate.Value = registrationDate.ToString(DATE_FORMAT);
                         }
 
-                        // Set project checkbox
-                        chkProject.Checked = recordset.Fields.Item("U_IsConverted").Value.ToString() == "Y";
-
+                        for (int i = 0; i < convertedComboBox.ValidValues.Count; i++)
+                        {
+                            if (convertedComboBox.ValidValues.Item(i).Value == converted)
+                            {
+                                convertedComboBox.Select(i, SAPbouiCOM.BoSearchKey.psk_Index);
+                                break;
+                            }
+                        }
                         // Load document lines using SQL file for project rows
                         LoadDocumentLines(docNumber);
                     }
@@ -331,7 +348,14 @@ namespace ProjeTablosu
         #endregion
 
         #region ComboBox Initialization
+        private void InitializeConvertedComboBox()
+        {
+            ClearComboBoxValues(convertedComboBox);
+            convertedComboBox.ValidValues.Add("Y", "Dönüştürüldü");
+            convertedComboBox.ValidValues.Add("N", "Reddedildi");
+            convertedComboBox.ValidValues.Add("P", "Beklemede");
 
+        }
         private void InitializeBranchComboBox()
         {
             SAPbobsCOM.Company company = GetCompany();
@@ -416,6 +440,8 @@ namespace ProjeTablosu
 
         private void ClearComboBoxValues(SAPbouiCOM.ComboBox comboBox)
         {
+            if (comboBox == null)
+                return; // Null ise hiçbir şey yapma
             if (comboBox.ValidValues.Count > 0)
             {
                 for (int i = comboBox.ValidValues.Count - 1; i >= 0; i--)

@@ -16,11 +16,13 @@ namespace ProjeTablosu
     {
         #region Form Kontrolleri
         private Button btn_prj;
+        private Button btn_red;
         private Grid grd_liste;
         private EditText txt_reg;      // Başlangıç tarihi
         private EditText txt_regbit;   // Bitiş tarihi
         private Button btn_fltr;
         private ComboBox cmb_filter;   // ComboBox filtresi
+        private EditText txt_reject;
         #endregion
 
         #region Sabitler
@@ -46,7 +48,8 @@ namespace ProjeTablosu
         // ComboBox değerleri için sabitler
         private const int FILTER_CONVERTED = 0;      // Projeye Dönüştürüldü
         private const int FILTER_NOT_CONVERTED = 1;  // Projeye Dönüştürülmedi
-        private const int FILTER_ALL = 2;            // Hepsi
+        private const int FILTER_PENDING = 2;
+        private const int FILTER_ALL = 3;            // Hepsi
         #endregion
 
         #region Yapıcı ve Başlatma Metodları
@@ -67,6 +70,9 @@ namespace ProjeTablosu
                 this.txt_regbit = ((SAPbouiCOM.EditText)(this.GetItem("txt_regbit").Specific));
                 this.btn_fltr = ((SAPbouiCOM.Button)(this.GetItem("btn_fltr").Specific));
                 this.cmb_filter = ((SAPbouiCOM.ComboBox)(this.GetItem("cmb_filter").Specific));
+                this.btn_red = ((SAPbouiCOM.Button)(this.GetItem("Item_0").Specific));
+                this.txt_reject = ((SAPbouiCOM.EditText)(this.GetItem("Item_4").Specific));
+
             }
             catch (Exception ex)
             {
@@ -91,6 +97,7 @@ namespace ProjeTablosu
                 this.grd_liste.ClickAfter += new SAPbouiCOM._IGridEvents_ClickAfterEventHandler(this.Grid0_ClickAfter);
                 this.btn_prj.ClickBefore += new SAPbouiCOM._IButtonEvents_ClickBeforeEventHandler(this.OnProjectButtonClickBefore);
                 this.btn_fltr.ClickBefore += new SAPbouiCOM._IButtonEvents_ClickBeforeEventHandler(this.BtnFilter_ClickBefore);
+                this.btn_red.ClickBefore += new SAPbouiCOM._IButtonEvents_ClickBeforeEventHandler(this.BtnRed_ClickBefore);
 
                 // EditText'lere varsayılan değer ataması ("yyyyMMdd" formatında)
                 this.txt_reg.Value = DateTime.Today.ToString("yyyyMMdd");
@@ -127,7 +134,8 @@ namespace ProjeTablosu
                 if (cmb_filter.ValidValues.Count == 0)
                 {
                     cmb_filter.ValidValues.Add(FILTER_CONVERTED.ToString(), "Projeye Dönüştürüldü");
-                    cmb_filter.ValidValues.Add(FILTER_NOT_CONVERTED.ToString(), "Projeye Dönüştürülmedi");
+                    cmb_filter.ValidValues.Add(FILTER_NOT_CONVERTED.ToString(), "Reddedildi");
+                    cmb_filter.ValidValues.Add(FILTER_PENDING.ToString(), "Beklemede");
                     cmb_filter.ValidValues.Add(FILTER_ALL.ToString(), "Hepsi");
                 }
             }
@@ -204,7 +212,10 @@ namespace ProjeTablosu
                         break;
                     case FILTER_NOT_CONVERTED:
                         // Sadece Y olmayanları veya NULL olanları göster
-                        convertedCondition = "AND (U_IsConverted <> 'Y' OR U_IsConverted IS NULL) ";
+                        convertedCondition = "AND U_IsConverted = 'N' ";
+                        break;
+                    case FILTER_PENDING:
+                        convertedCondition = "AND U_IsConverted = 'P' ";
                         break;
                     case FILTER_ALL:
                         // Tümünü göster - filtre yok
@@ -227,7 +238,11 @@ namespace ProjeTablosu
                         break;
                     case FILTER_NOT_CONVERTED:
                         // Sadece Y olmayanları veya NULL olanları göster
-                        convertedCondition = "AND (\"U_IsConverted\" <> 'Y' OR \"U_IsConverted\" IS NULL) ";
+                        convertedCondition = "AND \"U_IsConverted\" = 'N' ";
+                        break;
+                    case FILTER_PENDING:
+                        // Sadece Y olmayanları veya NULL olanları göster
+                        convertedCondition = "AND \"U_IsConverted\" = 'P' ";
                         break;
                     case FILTER_ALL:
                         // Tümünü göster - filtre yok
@@ -304,6 +319,80 @@ namespace ProjeTablosu
             catch (Exception ex)
             {
                 Helper.LogToFile($"Projeye geçiş hatası: {ex.Message}\n{ex.StackTrace}\n");
+                BubbleEvent = false;
+            }
+        }
+
+
+        private void BtnRed_ClickBefore(object sboObject, SBOItemEventArg pVal, out bool BubbleEvent)
+        {
+            BubbleEvent = true;
+            try
+            {
+                var form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
+                var grid = (SAPbouiCOM.Grid)form.Items.Item("grd_liste").Specific;
+
+                if (grid.Rows.SelectedRows.Count == 0)
+                {
+                    ShowMessage("Lütfen önce reddedeceğiniz kaydı seçiniz.");
+                    BubbleEvent = false;
+                    return;
+                }
+
+                int row = grid.Rows.SelectedRows.Item(0, BoOrderType.ot_RowOrder);
+                string docNum = grid.DataTable.GetValue("Döküman Numarası", row)?.ToString();
+                string reason = this.txt_reject.Value?.Trim();
+
+                if (string.IsNullOrEmpty(reason))
+                {
+                    ShowMessage("Lütfen reddetme nedenini giriniz.");
+                    BubbleEvent = false;
+                    return;
+                }
+
+                // SQL enjeksiyon karşı basit kaçış
+                string escapedReason = reason.Replace("'", "''");
+
+                var company = GetCompany();
+                var rs = (SAPbobsCOM.Recordset)company.GetBusinessObject(BoObjectTypes.BoRecordset);
+
+                // MSSQL vs HANA ayrımıyla doğru sözdizimi
+                string updateQuery;
+                if (company.DbServerType != BoDataServerTypes.dst_HANADB)
+                {
+                    // MSSQL: köşeli parantezli tablo, sütun isimleri doğrudan
+                    updateQuery = $"UPDATE [@PROJECT] " +
+                                  $"SET U_Reject = '{escapedReason}', U_IsConverted = 'N' " +
+                                  $"WHERE DocEntry = {docNum}";
+                }
+                else
+                {
+                    // HANA: tablo ve sütun isimleri çift tırnaklı
+                    updateQuery = $"UPDATE \"@PROJECT\" " +
+                                  $"SET \"U_Reject\" = '{escapedReason}', \"U_IsConverted\" = 'N' " +
+                                  $"WHERE \"DocEntry\" = {docNum}";
+                }
+
+                // Sorguyu log’a yaz
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click query:\n{updateQuery}\n");
+
+                rs.DoQuery(updateQuery);
+
+                // Başarı durumunu da log al
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click executed successfully for DocEntry {docNum}.\n");
+
+                Marshal.ReleaseComObject(rs);
+
+                // Grid ve UI güncellemesi
+                grid.DataTable.SetValue("Durum", row, "Reddedildi");
+                form.Items.Item("btn_prj").Enabled = false;
+
+                ShowStatusMessage("Proje reddedildi ve neden kaydedildi.", BoStatusBarMessageType.smt_Success);
+            }
+            catch (Exception ex)
+            {
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click error:\n{ex.Message}\n{ex.StackTrace}\n");
+                ShowMessage("Reddetme işlemi sırasında hata oluştu: " + ex.Message);
                 BubbleEvent = false;
             }
         }
@@ -409,7 +498,7 @@ namespace ProjeTablosu
                 // Güncelleme sorgusunu çalıştırmak isterseniz:
                 // recordset.DoQuery(updateQuery);
 
-                dt.SetValue("Projeye Dönüştürüldü", selectedRow, "Evet");
+                dt.SetValue("Durum", selectedRow, "Onaylandı");
                 var form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
                 form.Items.Item("btn_prj").Enabled = false;
 
@@ -579,31 +668,60 @@ namespace ProjeTablosu
         {
             try
             {
-                // Geçerli form ve buton referanslarını al
                 var form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
                 var btnPrjItem = form.Items.Item("btn_prj");
-
-                // Geçerli satır numarası
+                var grid = (SAPbouiCOM.Grid)sboObject;
                 int row = pVal.Row;
+
+                // Geçerli satır yoksa butonu kapat ve txt_reject'i temizle
                 if (row < 0)
                 {
-                    // Geçersiz satır varsa butonu pasif yap
                     btnPrjItem.Enabled = false;
+                    this.txt_reject.Value = string.Empty;
                     return;
                 }
 
-                // Grid’in DataTable’ından “Projeye Dönüştürüldü” değerini çek
-                var grid = (SAPbouiCOM.Grid)sboObject;
-                string converted = grid.DataTable.GetValue("Projeye Dönüştürüldü", row).ToString();
+                // “Projeye Dönüştürüldü” durumuna göre butonu ayarla
+                string converted = grid.DataTable.GetValue("Durum", row).ToString();
+                btnPrjItem.Enabled = !converted.Equals("Onaylandı", StringComparison.InvariantCultureIgnoreCase);
 
-                // Eğer zaten dönüştürülmüşse butonu pasif; değilse aktif et
-                btnPrjItem.Enabled = !converted.Equals("Evet", StringComparison.InvariantCultureIgnoreCase);
+                // Satırın DocEntry değerini al
+                string docNum = grid.DataTable.GetValue("Döküman Numarası", row).ToString();
+
+                // DI API ile Recordset oluştur
+                var company = GetCompany();
+                var rs = (SAPbobsCOM.Recordset)company.GetBusinessObject(BoObjectTypes.BoRecordset);
+
+                // MSSQL vs HANA ayrımıyla SELECT sorgusu
+                string selectQuery;
+                if (company.DbServerType != BoDataServerTypes.dst_HANADB)
+                {
+                    selectQuery = $"SELECT U_Reject FROM [@PROJECT] WHERE DocEntry = {docNum}";
+                }
+                else
+                {
+                    selectQuery = $"SELECT \"U_Reject\" FROM \"@PROJECT\" WHERE \"DocEntry\" = {docNum}";
+                }
+
+                // (İstersen loglamak için)
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Grid0_ClickAfter SELECT:\n{selectQuery}\n");
+
+                rs.DoQuery(selectQuery);
+
+                // Sonucu txt_reject'e ata
+                string reason = rs.RecordCount > 0
+                    ? rs.Fields.Item(0).Value.ToString()
+                    : string.Empty;
+                this.txt_reject.Value = reason;
+
+                // Temizlik
+                Marshal.ReleaseComObject(rs);
             }
             catch (Exception ex)
             {
-                Helper.LogToFile($"GrdListe_ClickAfter hatası: {ex.Message}\n{ex.StackTrace}\n");
+                Helper.LogToFile($"Grid0_ClickAfter hatası: {ex.Message}\n{ex.StackTrace}\n");
             }
-
         }
+
     }
 }
