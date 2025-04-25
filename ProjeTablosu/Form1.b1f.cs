@@ -132,6 +132,12 @@ namespace ProjeTablosu
         private void SBO_Application_MenuEvent(ref MenuEvent pVal, out bool BubbleEvent)
         {
             BubbleEvent = true;
+            // Sadece AfterAction (işlem tamamlandıktan sonra) yakalayalım:
+            //if (!pVal.BeforeAction)
+            //{
+            //    Application.SBO_Application.MessageBox($"MenuUID: {pVal.MenuUID}");
+
+            //}
             if (pVal.MenuUID == "1282" && pVal.BeforeAction == false)
             {
                 var form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
@@ -145,6 +151,11 @@ namespace ProjeTablosu
                 // Kayıt tarihi
                 if (string.IsNullOrEmpty(txtRegDate.Value))
                     txtRegDate.Value = DateTime.Today.ToString(DATE_FORMAT);
+            }
+            if (pVal.MenuUID == "1288" && pVal.BeforeAction == false)
+            {
+                CheckAndSetFormReadOnly();
+
             }
         }
 
@@ -165,10 +176,11 @@ namespace ProjeTablosu
                 SAPbobsCOM.Company company = GetCompany();
 
                 // Set user name
-                txtUser.Value = company.UserName;
+                this.txtUser.Value = company.UserName;
 
                 // Set registration date (today)
                 this.txtRegistrationDate.Value = DateTime.Today.ToString("yyyyMMdd");
+                CheckAndSetFormReadOnly();
 
 
             }
@@ -219,8 +231,7 @@ namespace ProjeTablosu
                     {
                         // Fill header fields
                         txtProjectName.Value = recordset.Fields.Item("U_ProjectTitle").Value.ToString();
-                        txtUser.Value = recordset.Fields.Item("U_NAME").Value.ToString();
-                        txt_reject.Value = recordset.Fields.Item("U_Reject").Value.ToString();
+
                         // Select Branch and Department in ComboBoxes
                         string branch = recordset.Fields.Item("U_Branch").Value.ToString();
                         string department = recordset.Fields.Item("U_Department").Value.ToString();
@@ -253,6 +264,9 @@ namespace ProjeTablosu
                             DateTime registrationDate = (DateTime)recordset.Fields.Item("U_RegDate").Value;
                             txtRegistrationDate.Value = registrationDate.ToString(DATE_FORMAT);
                         }
+                        txt_reject.Value = recordset.Fields.Item("U_Reject").Value.ToString();
+                        this.txt_DocNum.Value = docNumber;
+                        txtUser.Value = recordset.Fields.Item("U_NAME").Value.ToString();
 
                         for (int i = 0; i < convertedComboBox.ValidValues.Count; i++)
                         {
@@ -262,6 +276,8 @@ namespace ProjeTablosu
                                 break;
                             }
                         }
+                        CheckAndSetFormReadOnly();
+
                         // Load document lines using SQL file for project rows
                         LoadDocumentLines(docNumber);
                     }
@@ -345,6 +361,96 @@ namespace ProjeTablosu
                 }
             }
         }
+        #endregion
+        #region Form Permissions
+
+        // Bu fonksiyonu Form1 sınıfı içine ekleyin
+        private void CheckAndSetFormReadOnly()
+        {
+            try
+            {
+                // Check if project status is "Y" (Converted/Dönüştürüldü)
+                if (convertedComboBox != null && convertedComboBox.Value == "Y")
+                {
+                    // Disable all input fields
+                    DisableFormControls();
+                }
+                else
+                {
+                    // Enable form controls
+                    EnableFormControls();
+                }
+            }
+            catch (Exception ex)
+            {
+                Helper.LogToFile($"Error in CheckAndSetFormReadOnly: {ex.Message}\n{ex.StackTrace}\n");
+            }
+        }
+
+        // Form kontrollerini devre dışı bırakma metodu
+        private void DisableFormControls()
+        {
+            UIAPIRawForm.Freeze(true);
+            try
+            {
+                // Disable text fields
+                txtProjectName.Item.Enabled = false;
+                txtDeliveryDate.Item.Enabled = false;
+                
+                // Disable combo boxes
+                cmbBranch.Item.Enabled = false;
+                cmbDepartment.Item.Enabled = false;
+
+                // Matrix should be read-only
+                matrixItems.Item.Enabled = false;
+
+                // Disable buttons that modify data
+                btnAddRow.Item.Enabled = false;
+                btnDellRow.Item.Enabled = false;
+
+                // The OK button can still be enabled if you want to allow viewing
+                btnOk.Item.Enabled = false;
+                txtRegistrationDate.Item.Enabled = false;
+                txt_reject.Item.Enabled = false;
+                txtUser.Item.Enabled = false;
+            }
+            finally
+            {
+                UIAPIRawForm.Freeze(false);
+            }
+        }
+
+        // Form kontrollerini tekrar aktifleştirme metodu
+        private void EnableFormControls()
+        {
+            UIAPIRawForm.Freeze(true);
+            try
+            {
+                // Enable text fields
+                txtProjectName.Item.Enabled = true;
+                txtUser.Item.Enabled = true;
+                txtDeliveryDate.Item.Enabled = true;
+                txtRegistrationDate.Item.Enabled = true;
+                txt_reject.Item.Enabled = true;
+
+                // Enable combo boxes
+                cmbBranch.Item.Enabled = true;
+                cmbDepartment.Item.Enabled = true;
+
+                // Matrix should be editable
+                matrixItems.Item.Enabled = true;
+
+                // Enable buttons
+                btnAddRow.Item.Enabled = true;
+                btnDellRow.Item.Enabled = true;
+                btnOk.Item.Enabled = true;
+            }
+            finally
+            {
+                UIAPIRawForm.Freeze(false);
+            }
+        }
+
         #endregion
 
         #region ComboBox Initialization
@@ -493,7 +599,7 @@ namespace ProjeTablosu
 
         private void OnUserChooseFromListAfter(object sboObject, SBOItemEventArg pVal)
         {
-            HandleChooseFromListAfter("U_NAME", "U_NAME", UDO_PROJECT_TABLE, pVal);
+            HandleChooseFromListAfter("USER_CODE", "U_NAME", UDO_PROJECT_TABLE, pVal);
         }
 
         private void OnMatrixChooseFromListAfter(object sboObject, SBOItemEventArg pVal)

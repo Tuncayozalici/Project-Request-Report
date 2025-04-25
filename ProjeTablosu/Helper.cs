@@ -23,6 +23,7 @@ namespace ProjeTablosu
 
         public static void LogToFile(string logMessage)
         {
+            string Log = "\n" + logMessage;
             string logDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ProjeTablosu", "logs");
             try
             {
@@ -32,7 +33,7 @@ namespace ProjeTablosu
                 }
                 string logFileName = DateTime.Now.ToString("yyyy-MM-dd") + ".txt";
                 string logFilePath = Path.Combine(logDirectory, logFileName);
-                File.AppendAllText(logFilePath, logMessage);
+                File.AppendAllText(logFilePath, Log);
             }
             catch { }
         }

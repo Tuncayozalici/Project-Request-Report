@@ -327,104 +327,122 @@ namespace ProjeTablosu
         private void BtnRed_ClickBefore(object sboObject, SBOItemEventArg pVal, out bool BubbleEvent)
         {
             BubbleEvent = true;
+
+            // 1) Form ve Grid referanslarını al
+            var form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
+            var grid = (SAPbouiCOM.Grid)form.Items.Item("grd_liste").Specific;
+
+            // 2) Satır seçimi kontrolü
+            if (grid.Rows.SelectedRows.Count == 0)
+            {
+                ShowMessage("Lütfen önce reddedeceğiniz kaydı seçiniz.");
+                BubbleEvent = false;
+                return;
+            }
+            int row = grid.Rows.SelectedRows.Item(0, BoOrderType.ot_RowOrder);
+
+            // 3) Doküman numarası ve reddetme sebebi
+            string docNum = grid.DataTable.GetValue("Döküman Numarası", row)?.ToString();
+            string reason = this.txt_reject.Value?.Trim();
+            if (string.IsNullOrEmpty(reason))
+            {
+                ShowMessage("Lütfen reddetme nedenini giriniz.");
+                BubbleEvent = false;
+                return;
+            }
+            string escapedReason = reason.Replace("'", "''");
+
+            var company = GetCompany();
+
+            // 4) UPDATE sorgusu ve COM nesnesinin yönetimi
+            SAPbobsCOM.Recordset rsUpdate = null;
             try
             {
-                // 1) Form ve Grid referansları
-                var form = Application.SBO_Application.Forms.Item(this.UIAPIRawForm.UniqueID);
-                var grid = (SAPbouiCOM.Grid)form.Items.Item("grd_liste").Specific;
+                rsUpdate = (SAPbobsCOM.Recordset)company.GetBusinessObject(BoObjectTypes.BoRecordset);
+                string updateQuery = company.DbServerType != BoDataServerTypes.dst_HANADB
+                    ? $"UPDATE [@PROJECT] SET U_Reject = '{escapedReason}', U_IsConverted = 'N' WHERE DocEntry = {docNum}"
+                    : $"UPDATE \"@PROJECT\" SET \"U_Reject\" = '{escapedReason}', \"U_IsConverted\" = 'N' WHERE \"DocEntry\" = {docNum}";
 
-                // 2) Satır seçimi kontrolü
-                if (grid.Rows.SelectedRows.Count == 0)
-                {
-                    ShowMessage("Lütfen önce reddedeceğiniz kaydı seçiniz.");
-                    BubbleEvent = false;
-                    return;
-                }
-                int row = grid.Rows.SelectedRows.Item(0, BoOrderType.ot_RowOrder);
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click UPDATE query:\n{updateQuery}");
+                rsUpdate.DoQuery(updateQuery);
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click UPDATE executed for DocEntry {docNum}.");
 
-                // 3) Doküman numarası ve reddetme sebebi
-                string docNum = grid.DataTable.GetValue("Döküman Numarası", row)?.ToString();
-                string reason = this.txt_reject.Value?.Trim();
-                if (string.IsNullOrEmpty(reason))
-                {
-                    ShowMessage("Lütfen reddetme nedenini giriniz.");
-                    BubbleEvent = false;
-                    return;
-                }
-                // Basit SQL enjeksiyon kaçışı
-                string escapedReason = reason.Replace("'", "''");
-
-                // 4) UDO tablosuna UPDATE
-                var company = GetCompany();
-                var rs = (SAPbobsCOM.Recordset)company.GetBusinessObject(BoObjectTypes.BoRecordset);
-                string updateQuery;
-                if (company.DbServerType != BoDataServerTypes.dst_HANADB)
-                {
-                    updateQuery =
-                        $"UPDATE [@PROJECT] " +
-                        $"SET U_Reject = '{escapedReason}', U_IsConverted = 'N' " +
-                        $"WHERE DocEntry = {docNum}";
-                }
-                else
-                {
-                    updateQuery =
-                        $"UPDATE \"@PROJECT\" " +
-                        $"SET \"U_Reject\" = '{escapedReason}', \"U_IsConverted\" = 'N' " +
-                        $"WHERE \"DocEntry\" = {docNum}";
-                }
-                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click query:\n{updateQuery}\n");
-                rs.DoQuery(updateQuery);
-                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click executed successfully for DocEntry {docNum}.\n");
-                Marshal.ReleaseComObject(rs);
-
-                // 5) Grid ve UI güncellemesi
+                // Grid ve UI güncellemesi
                 grid.DataTable.SetValue("Durum", row, "Reddedildi");
                 form.Items.Item("btn_prj").Enabled = false;
                 ShowStatusMessage("Proje reddedildi ve neden kaydedildi.", BoStatusBarMessageType.smt_Success);
+            }
+            catch (Exception ex)
+            {
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click UPDATE error:\n{ex.Message}\n{ex.StackTrace}");
+                BubbleEvent = false;
+                return;
+            }
+            finally
+            {
+                if (rsUpdate != null)
+                    Marshal.ReleaseComObject(rsUpdate);
+            }
 
-                // 6) Talep sahibinin kullanıcı kodunu UDO’dan çekin
-                string requesterUserCode = "";
-                var rsUser = (SAPbobsCOM.Recordset)company.GetBusinessObject(BoObjectTypes.BoRecordset);
-                string userQuery;
-                if (company.DbServerType != BoDataServerTypes.dst_HANADB)
-                {
-                    userQuery =
-                        $"SELECT U_NAME FROM [@PROJECT] WHERE DocEntry = {docNum}";
-                }
-                else
-                {
-                    userQuery =
-                        $"SELECT \"U_NAME\" FROM \"@PROJECT\" WHERE \"DocEntry\" = {docNum}";
-                }
+            // 5) Talep sahibinin kullanıcı kodunu alma
+            string requesterUserCode = "";
+            SAPbobsCOM.Recordset rsUser = null;
+            try
+            {
+                rsUser = (SAPbobsCOM.Recordset)company.GetBusinessObject(BoObjectTypes.BoRecordset);
+                string userQuery = company.DbServerType != BoDataServerTypes.dst_HANADB
+                    ? $"SELECT U_NAME FROM [@PROJECT] WHERE DocEntry = {docNum}"
+                    : $"SELECT \"U_NAME\" FROM \"@PROJECT\" WHERE \"DocEntry\" = {docNum}";
+
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click USER query:\n{userQuery}");
                 rsUser.DoQuery(userQuery);
-                if (rsUser.RecordCount > 0)
-                    requesterUserCode = rsUser.Fields.Item("U_NAME").Value.ToString();
-                Marshal.ReleaseComObject(rsUser);
 
-                // 7) Mesaj başlığı ve içeriği
+                int count = rsUser.RecordCount;
+                string rawCode = (count > 0) ? rsUser.Fields.Item("U_NAME").Value.ToString() : "";
+
+                Helper.LogToFile($"[BtnRed_Click] RecordCount: {count}, RawCode: '{rawCode}'");
+                if (count == 0 || string.IsNullOrEmpty(rawCode))
+                {
+                    ShowStatusMessage(
+                        "Reddedilen talep sahibinin kullanıcı kodu alınamadı. Lütfen U_NAME alanını kontrol edin.",
+                        BoStatusBarMessageType.smt_Error);
+                    return;
+                }
+
+                requesterUserCode = rawCode;
+            }
+            catch (Exception ex)
+            {
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click USER error:\n{ex.Message}\n{ex.StackTrace}");
+                return;
+            }
+            finally
+            {
+                if (rsUser != null)
+                    Marshal.ReleaseComObject(rsUser);
+            }
+
+            // 6) Bildirimi gönder
+            try
+            {
+                string udoType = GetUdoObjectType(company, "UDOPROJECT");
                 string subject = $"Proje Talebi #{docNum} Reddedildi";
                 string body = $"{DateTime.Now:yyyy-MM-dd HH:mm} tarihinde proje talebiniz “Reddedildi” olarak güncellendi. Sebep: {reason}";
 
-                // 8) UDO ObjectType kodunu al (örn. "1390000084")
-                string udoType = GetUdoObjectType(company, "UDOPROJECT");
-
-                // 9) Bildirimi gönder
                 MessagesHelper.SendMessage(
                     company,
                     requesterUserCode,
                     subject,
                     body,
                     linkTable: udoType,
-                    linkKey: docNum
-                );
+                    linkKey: docNum);
             }
             catch (Exception ex)
             {
-                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click error:\n{ex.Message}\n{ex.StackTrace}\n");
-                ShowMessage("Reddetme işlemi sırasında hata oluştu: " + ex.Message);
-                BubbleEvent = false;
+                Helper.LogToFile($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - BtnRed_Click SENDMSG error:\n{ex.Message}\n{ex.StackTrace}");
             }
         }
+
 
 
         #endregion
@@ -451,7 +469,8 @@ namespace ProjeTablosu
             string projectTitle = dt.GetValue("Proje Talebi Tanımı", selectedRow)?.ToString().Trim() ?? "";
             string regDateStr = dt.GetValue("Kayıt Tarihi", selectedRow)?.ToString().Trim() ?? "";
             string delDateStr = dt.GetValue("İstenilen Tarih", selectedRow)?.ToString().Trim() ?? "";
-
+            string requesterUserCode = "";
+            string udoType = "";
             Trace.WriteLine("DEBUG - Kayıt Tarihi: " + regDateStr);
             Trace.WriteLine("DEBUG - İstenilen Tarih: " + delDateStr);
 
@@ -536,29 +555,43 @@ namespace ProjeTablosu
 
                 ShowStatusMessage($"Proje başarıyla oluşturuldu. Proje Kodu: {newProjectAbsEntry}", BoStatusBarMessageType.smt_Success);
 
+                string userSql = company.DbServerType != BoDataServerTypes.dst_HANADB
+                         ? $"SELECT U_NAME FROM [@PROJECT] WHERE DocEntry = {docEntry}"
+                         : $"SELECT \"U_NAME\" FROM \"@PROJECT\" WHERE \"DocEntry\" = {docEntry}";
 
-                // 6) Talep sahibinin kullanıcı kodunu UDO’dan çek
-                string requesterUserCode = "";
                 var rsUser = (SAPbobsCOM.Recordset)
                     company.GetBusinessObject(BoObjectTypes.BoRecordset);
 
-                string userSql = company.DbServerType != BoDataServerTypes.dst_HANADB
-                    ? $"SELECT U_NAME FROM [@PROJECT] WHERE DocEntry = {docEntry}"
-                    : $"SELECT \"U_NAME\" FROM \"@PROJECT\" WHERE \"DocEntry\" = {docEntry}";
+                try
+                {
+                    rsUser.DoQuery(userSql);
+                    int count = rsUser.RecordCount;
+                    string rawCode = (count > 0)
+                        ? rsUser.Fields.Item("U_NAME").Value.ToString()
+                        : "";
 
-                rsUser.DoQuery(userSql);
-                if (rsUser.RecordCount > 0)
-                    requesterUserCode = rsUser.Fields.Item("U_NAME").Value.ToString();
-                Marshal.ReleaseComObject(rsUser);
+                    if (count == 0 || string.IsNullOrEmpty(rawCode))
+                    {
+                        ShowStatusMessage(
+                            "Reddedilen talep sahibinin kullanıcı kodu alınamadı. Lütfen U_NAME alanını kontrol edin.",
+                            BoStatusBarMessageType.smt_Error);
+                        return;
+                    }
 
-                // 7) Mesaj başlığı ve içeriği hazırla
+                    requesterUserCode = rawCode;
+                }
+                finally
+                {
+                    Marshal.ReleaseComObject(rsUser);
+                }
+
+                // 7) UDO ObjectType kodunu al
+                udoType = GetUdoObjectType(company, "UDOPROJECT");
+
+                // 8) Mesajı gönder
                 string subject = $"Proje Talebi #{docEntry} Onaylandı";
                 string body = $"{DateTime.Now:yyyy-MM-dd HH:mm} tarihinde proje talebiniz “Onaylandı” olarak işleme alındı. Yeni Proje Kodu: {newProjectAbsEntry}";
 
-                // 8) UDO ObjectType kodunu al
-                string udoType = GetUdoObjectType(company, "UDOPROJECT");
-
-                // 9) Bildirimi gönder
                 MessagesHelper.SendMessage(
                     company,
                     requesterUserCode,
@@ -566,7 +599,6 @@ namespace ProjeTablosu
                     body,
                     linkTable: udoType,
                     linkKey: docEntry);
-
             }
             catch (Exception ex)
             {
@@ -575,21 +607,10 @@ namespace ProjeTablosu
             }
             finally
             {
-                if (recordset != null)
-                {
-                    Marshal.ReleaseComObject(recordset);
-                    recordset = null;
-                }
-                if (projectService != null)
-                {
-                    Marshal.ReleaseComObject(projectService);
-                    projectService = null;
-                }
-                if (companyService != null)
-                {
-                    Marshal.ReleaseComObject(companyService);
-                    companyService = null;
-                }
+                // 9) DI API nesnelerini serbest bırak ve form kilidini aç
+                if (projectService != null) Marshal.ReleaseComObject(projectService);
+                if (companyService != null) Marshal.ReleaseComObject(companyService);
+                this.UIAPIRawForm.Freeze(false);
                 GC.Collect();
             }
         }
