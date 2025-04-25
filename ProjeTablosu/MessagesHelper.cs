@@ -33,8 +33,7 @@ namespace ProjeTablosu
             rc.Item(0).UserCode = recipientUserCode;
             rc.Item(0).SendInternal = SAPbobsCOM.BoYesNoEnum.tYES;
             rc.Item(0).SendEmail = SAPbobsCOM.BoYesNoEnum.tNO;
-
-            if (!string.IsNullOrEmpty(linkTable) && !string.IsNullOrEmpty(linkKey))
+            /*if (!string.IsNullOrEmpty(linkTable) && !string.IsNullOrEmpty(linkKey))
             {
                 var cols = message.MessageDataColumns;
                 var col = cols.Add();
@@ -44,7 +43,7 @@ namespace ProjeTablosu
                 line.Value = linkKey;      
                 line.Object = linkTable;        
                 line.ObjectKey = linkKey;
-            }
+            }*/
 
             // 5) Gönder
             messageSrv.SendMessage(message);
